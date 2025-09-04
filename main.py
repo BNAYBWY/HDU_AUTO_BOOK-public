@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # --- 定义抢座目标时间 (东八区时间) ---
 TARGET_HOUR = 15
-TARGET_MINUTE = 06
+TARGET_MINUTE = 7
 
 class SeatAutoBooker:
     # ... class内部直到 book_seat 方法前都无任何变化 ...
