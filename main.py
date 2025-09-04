@@ -23,8 +23,8 @@ logging.basicConfig(
     level=logging.INFO)
 
 # --- 定义抢座目标时间 (东八区时间) ---
-TARGET_HOUR = 15
-TARGET_MINUTE = 22
+TARGET_HOUR = 22
+TARGET_MINUTE = 30
 
 class SeatAutoBooker:
     # ... class内部直到 book_seat 方法前都无任何变化 ...
@@ -116,13 +116,13 @@ class SeatAutoBooker:
         data = f"beginTime={total_seconds}&duration={3600 * duration_hours}&seats[0]={seat_to_book}&seatBookers[0]={self.user_data['uid']}"
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
-
+        logging.info(data)
         for i in range(1):
             try:
-                print(f"第 {i+1}/{1} 次尝试抢座: {start_hour}:00...")
+                logging.info(f"第 {i+1}/{1} 次尝试抢座: {start_hour}:00...")
                 resp = requests.post(self.cfg["target"], data=data, headers=headers)
                 resp_json = resp.json()
-                print(f"收到响应: {resp_json}")
+                logging.info(f"收到响应: {resp_json}")
                 if resp_json.get("CODE") == "ok":
                     message = f"成功抢到座位: {seat_to_book} at {start_hour}:00"
                     logging.info(message)
