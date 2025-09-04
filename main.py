@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # --- 定义抢座目标时间 (东八区时间) ---
 TARGET_HOUR = 15
-TARGET_MINUTE = 16
+TARGET_MINUTE = 22
 
 class SeatAutoBooker:
     # ... class内部直到 book_seat 方法前都无任何变化 ...
@@ -35,7 +35,7 @@ class SeatAutoBooker:
         self.un = os.environ["SCHOOL_ID"].strip()
         self.pd = os.environ["PASSWORD"].strip()
         self.SCKey = os.environ.get("SCKEY", "")
-        logging.info(f"使用用户：{self.un}")
+        print(f"使用用户：{self.un}")
 
         if not self.SCKey:
             print("没有Server酱的key,将不会推送消息")
@@ -96,36 +96,33 @@ class SeatAutoBooker:
         logging.info(f'开始抢座: {start_hour}:00, 持续 {duration_hours} 小时')
         seat_to_book = user_config['自定义'][0]
         
-        tz_cst = ZoneInfo("Asia/Shanghai")
+        # ★★★ 核心修正 ★★★
+        # 此处恢复为使用服务器的默认时间 (UTC) 来计算请求参数，以匹配API的期望。
+        # 这是一种 "naive" (无时区信息) 的时间计算方式。
         
-        # 创建一个带时区的、代表未来的预约时间对象
-        book_date = datetime.now(tz_cst) + timedelta(days=1)
+        # 1. 获取服务器当前时间 (UTC)
+        utc_now = datetime.now() 
+        # 2. 基于UTC时间计算预约日期
+        book_date = utc_now + timedelta(days=1)
         book_time_obj = book_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         
-        # ★★★ 核心改动：不再从文件读取，直接在代码中定义API的时间基准点 ★★★
-        #
-        #   旧代码 (已删除):
-        #   start_time_naive = self.cfg["start-time"]
-        #   start_time_aware = start_time_naive.replace(tzinfo=tz_cst)
-        #
-        #   新代码:
-        #   直接定义一个带时区的、符合标准的Unix Epoch时间对象
-        api_epoch_aware = datetime(1970, 1, 1, tzinfo=tz_cst)
+        # 3. 使用无时区的 Unix Epoch 作为时间基准点
+        api_epoch_naive = datetime(1970, 1, 1)
         
-        # 现在，两个时间对象都带有相同的时区信息，可以直接计算
-        delta = book_time_obj - api_epoch_aware
+        # 4. 在两个无时区的datetime对象之间进行计算，生成API需要的秒数
+        delta = book_time_obj - api_epoch_naive
+        total_seconds = int(delta.total_seconds())
         
-        total_seconds = delta.days * 24 * 3600 + delta.seconds
         data = f"beginTime={total_seconds}&duration={3600 * duration_hours}&seats[0]={seat_to_book}&seatBookers[0]={self.user_data['uid']}"
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
 
-        for i in range(3):
+        for i in range(1):
             try:
-                logging.info(f"第 {i+1}/{3} 次尝试抢座: {start_hour}:00...")
+                print(f"第 {i+1}/{1} 次尝试抢座: {start_hour}:00...")
                 resp = requests.post(self.cfg["target"], data=data, headers=headers)
                 resp_json = resp.json()
-                logging.info(f"收到响应: {resp_json}")
+                print(f"收到响应: {resp_json}")
                 if resp_json.get("CODE") == "ok":
                     message = f"成功抢到座位: {seat_to_book} at {start_hour}:00"
                     logging.info(message)
@@ -157,7 +154,7 @@ class SeatAutoBooker:
 
 
 if __name__ == "__main__":
-    # ... 主程序部分无任何变化 ...
+    # (主程序中的时区等待逻辑保持不变，确保准时触发)
     logging.info('====== 开始执行抢座脚本 ======')
     
     with open("user_config.yml", 'r', encoding='utf-8') as f_obj:
@@ -180,6 +177,7 @@ if __name__ == "__main__":
         s.driver.quit()
         exit(-1)
 
+    # 此处的时区逻辑仅用于精确等待，是正确的
     tz_cst = ZoneInfo("Asia/Shanghai")
     logging.info(f"登录成功，准备等待到北京时间 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
     
@@ -211,9 +209,9 @@ if __name__ == "__main__":
 
     summary_title = "HDU抢座完成"
     summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
-    logging.info("\n--- 抢座总结 ---")
-    logging.info(summary_desp)
-    logging.info("--------------------")
+    print("\n--- 抢座总结 ---")
+    print(summary_desp)
+    print("--------------------")
     s.wechatNotice(summary_title, summary_desp)
 
     s.driver.quit()
