@@ -6,7 +6,7 @@ import os
 import logging
 import time
 
-# ★★★ 新增：引入时区处理库 ★★★
+# 引入时区处理库
 from zoneinfo import ZoneInfo
 
 from selenium import webdriver
@@ -16,18 +16,18 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
 
-# --- Basic Configuration ---
+# --- 基本配置 ---
 logging.basicConfig(
     format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
     datefmt='%H:%M:%S',
     level=logging.INFO)
 
 # --- 定义抢座目标时间 (东八区时间) ---
-TARGET_HOUR = 14  # 目标小时 (24小时制)
-TARGET_MINUTE = 56 # 目标分钟
+TARGET_HOUR = 15
+TARGET_MINUTE = 06
 
 class SeatAutoBooker:
-    # ... 此 class 内的所有代码保持不变，无需修改 ...
+    # ... class内部直到 book_seat 方法前都无任何变化 ...
     def __init__(self, booker_config):
         self.user_data = None
         logging.info('Creating SeatAutoBooker object')
@@ -95,10 +95,26 @@ class SeatAutoBooker:
     def book_seat(self, start_hour, duration_hours, user_config):
         logging.info(f'开始抢座: {start_hour}:00, 持续 {duration_hours} 小时')
         seat_to_book = user_config['自定义'][0]
-        # 使用带时区的now()以确保日期正确
-        book_date = datetime.now(ZoneInfo("Asia/Shanghai")) + timedelta(days=1)
+        
+        tz_cst = ZoneInfo("Asia/Shanghai")
+        
+        # 创建一个带时区的、代表未来的预约时间对象
+        book_date = datetime.now(tz_cst) + timedelta(days=1)
         book_time_obj = book_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-        delta = book_time_obj - self.cfg["start-time"]
+        
+        # ★★★ 核心改动：不再从文件读取，直接在代码中定义API的时间基准点 ★★★
+        #
+        #   旧代码 (已删除):
+        #   start_time_naive = self.cfg["start-time"]
+        #   start_time_aware = start_time_naive.replace(tzinfo=tz_cst)
+        #
+        #   新代码:
+        #   直接定义一个带时区的、符合标准的Unix Epoch时间对象
+        api_epoch_aware = datetime(1970, 1, 1, tzinfo=tz_cst)
+        
+        # 现在，两个时间对象都带有相同的时区信息，可以直接计算
+        delta = book_time_obj - api_epoch_aware
+        
         total_seconds = delta.days * 24 * 3600 + delta.seconds
         data = f"beginTime={total_seconds}&duration={3600 * duration_hours}&seats[0]={seat_to_book}&seatBookers[0]={self.user_data['uid']}"
         headers = self.cfg["headers"]
@@ -141,6 +157,7 @@ class SeatAutoBooker:
 
 
 if __name__ == "__main__":
+    # ... 主程序部分无任何变化 ...
     logging.info('====== 开始执行抢座脚本 ======')
     
     with open("user_config.yml", 'r', encoding='utf-8') as f_obj:
@@ -152,7 +169,6 @@ if __name__ == "__main__":
         logging.info('抢座功能未在 user_config.yml 中启用，脚本退出。')
         exit(0)
 
-    # --- 步骤一：提前登录并准备好信息 ---
     s = SeatAutoBooker(basic_config["SeatAutoBooker"])
     if s.login() != 0:
         s.wechatNotice("HDU抢座失败", "登录失败，请检查账号密码或网站更新。")
@@ -164,16 +180,13 @@ if __name__ == "__main__":
         s.driver.quit()
         exit(-1)
 
-    # --- ★★★ 步骤二：进入基于东八区时间的精确等待循环 ★★★ ---
-    tz_cst = ZoneInfo("Asia/Shanghai") # 定义东八区时区
+    tz_cst = ZoneInfo("Asia/Shanghai")
     logging.info(f"登录成功，准备等待到北京时间 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
     
-    # 获取当前的东八区时间，并设置今天的目标时间点
     now_cst = datetime.now(tz_cst)
     target_time = now_cst.replace(hour=TARGET_HOUR, minute=TARGET_MINUTE, second=0, microsecond=0)
 
     while True:
-        # 实时获取东八区时间进行比较
         current_time_cst = datetime.now(tz_cst)
         if current_time_cst >= target_time:
             logging.info(f"北京时间 {current_time_cst.strftime('%H:%M:%S')} 已到，开始执行抢座！")
@@ -181,17 +194,14 @@ if __name__ == "__main__":
         
         remaining_seconds = (target_time - current_time_cst).total_seconds()
         
-        # 打印倒计时，避免日志刷屏
         if int(remaining_seconds) % 10 == 0 and int(remaining_seconds) > 0:
             logging.info(f"等待中... 距离目标时间还剩 {remaining_seconds:.0f} 秒")
-            time.sleep(1) # 避免在同一秒内重复打印
+            time.sleep(1)
         elif remaining_seconds < 10:
-             time.sleep(0.05) # 最后10秒，高频检查
+             time.sleep(0.05)
         else:
-             time.sleep(1) # 平时每秒检查一次
+             time.sleep(1)
     
-    # --- 步骤三：执行抢座 ---
-    # (此部分无变化)
     results = []
     success1, msg1 = s.book_seat(start_hour=8, duration_hours=6, user_config=user_config)
     results.append(msg1)
@@ -199,8 +209,6 @@ if __name__ == "__main__":
     success2, msg2 = s.book_seat(start_hour=14, duration_hours=6, user_config=user_config)
     results.append(msg2)
 
-    # --- 步骤四：发送总结通知 ---
-    # (此部分无变化)
     summary_title = "HDU抢座完成"
     summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
     print("\n--- 抢座总结 ---")
