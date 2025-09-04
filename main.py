@@ -1,10 +1,10 @@
 import requests
 import yaml
-import random
 from datetime import datetime, timedelta
 import json
 import os
 import logging
+import time
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -12,207 +12,194 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
-import time
 
-
+# --- Basic Configuration ---
 logging.basicConfig(
-                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-                    datefmt='%H:%M:%S',
-                    level=logging.DEBUG)
+    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+    datefmt='%H:%M:%S',
+    level=logging.INFO)
 
-time_zone = 8  # 时区
-
-# 两天后日期
-
-def get_seats_with_config(user_config, date_config, seat_config):
-    # 二楼东/二楼西/四楼/三楼大厅/守正书院/求新书院/自定义
-    seat_name = date_config['name']
-    if seat_name == "自定义":
-        return user_config['自定义']
-    return list(range(seat_config[seat_name]['begin'], seat_config[seat_name]['end']))
-
+# --- ★★★ 新增：定义抢座目标时间 ★★★ ---
+TARGET_HOUR = 22  # 目标小时 (24小时制)
+TARGET_MINUTE = 30 # 目标分钟
 
 class SeatAutoBooker:
     def __init__(self, booker_config):
-        self.json = None
-        self.resp = None
         self.user_data = None
-
         logging.info('Creating SeatAutoBooker object')
 
-        self.un = os.environ["SCHOOL_ID"].strip()  # 学号
-        print("使用用户：{}".format(self.un))
-        self.pd = os.environ["PASSWORD"].strip()  # 密码
-        self.SCKey = None
-        try:
-            self.SCKey = os.environ["SCKEY"]
-        except KeyError:
+        # --- User Credentials from GitHub Secrets ---
+        self.un = os.environ["SCHOOL_ID"].strip()
+        self.pd = os.environ["PASSWORD"].strip()
+        self.SCKey = os.environ.get("SCKEY", "")
+        print(f"使用用户：{self.un}")
+
+        if not self.SCKey:
             print("没有Server酱的key,将不会推送消息")
 
+        # --- Selenium WebDriver Setup ---
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         self.driver = webdriver.Chrome(service=Service('/usr/local/bin/chromedriver'), options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 10, 0.5)
+        self.wait = WebDriverWait(self.driver, 15, 1)
         self.cookie = None
-
         self.cfg = booker_config
 
-    def book_favorite_seat(self, user_config, seat_config):
-        #判断是否到了预约时间
-        # 阅览室晚上9点开始预约，自习室晚上8点半开始预约
-        the_day_after_tomorrow = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][(datetime.now().weekday() + 2) % 7]
-        seat_type = seat_config[user_config[the_day_after_tomorrow]['name']]["type"]
-        if seat_type == "自习室":
-            start_time = datetime.now().replace(hour=20-time_zone, minute=0, second=0, microsecond=0)
-            end_time = datetime.now().replace(hour=20-time_zone, minute=15, second=0, microsecond=0)
-        else:
-            start_time = datetime.now().replace(hour=21-time_zone, minute=0, second=0, microsecond=0)
-            end_time = datetime.now().replace(hour=21-time_zone, minute=15, second=0, microsecond=0)
-        start_time = start_time - timedelta(minutes=self.cfg["cron-delta-minutes"])
-        if datetime.now() < start_time or datetime.now() > end_time:
-            print( "未到预约时间")
-        logging.info('Booking favorite seat')
-        retry_sleep_time = timedelta(minutes=self.cfg["cron-delta-minutes"]).seconds*2/(self.cfg["max-retry"]-2) - 10
-        for tried_times in range(self.cfg["max-retry"]):
-            try:
-                return self._book_favorite_seat(user_config, seat_config, tried_times)
-            except Exception as e:
-                logging.exception(e)
-                print(e.__class__, "尝试第{}次".format(tried_times))
-                time.sleep(retry_sleep_time)
-
-    def _book_favorite_seat(self, user_config, seat_config, tried_times=0):
-        logging.info('Entering _book_favorite_seat method')
-        the_day_after_tomorrow = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][(datetime.now().weekday() + 2) % 7]
-        date_config = user_config[the_day_after_tomorrow]
-        seats = get_seats_with_config(user_config, date_config, seat_config)
-        today_0_clock = datetime.strptime(datetime.now().strftime("%Y-%m-%d 00:00:00"), "%Y-%m-%d %H:%M:%S")
-        book_time = today_0_clock + timedelta(days=2) + timedelta(hours=date_config['开始时间'])
-        delta = book_time - self.cfg["start-time"]
-        total_seconds = delta.days * 24 * 3600 + delta.seconds
-        if date_config['name'] == '自定义' and tried_times<self.cfg["max-retry"]/3*2:
-            seat = seats[0]
-        else:
-            seat = random.choice(seats)
-        data = f"beginTime={total_seconds}&duration={3600 * date_config['持续小时数']}&&seats[0]={seat}&seatBookers[0]={self.user_data['uid']}"
-
-        headers = self.cfg["headers"]
-        headers['Cookie'] = self.cookie
-        print(data)
-        self.resp = requests.post(self.cfg["target"], data=data, headers=headers)
-        self.json = json.loads(self.resp.text)
-        print(self.json)
-        return self.json["CODE"], self.json["MESSAGE"] + " 座位:{}".format(seat)
-
     def login(self):
-        logging.info('Login in')
-
+        logging.info('开始登陆...')
         pwd_path_selector = """//*[@id="react-root"]/div/div/div[1]/div[2]/div/div[1]/div[2]/div/div/div/div/div[1]/div[2]/div/div[3]/div/div[2]/input"""
         button_path_selector = """//*[@id="react-root"]/div/div/div[1]/div[2]/div/div[1]/div[2]/div/div/div/div/div[1]/div[3]"""
 
         try:
-            logging.info('开始登陆...')
-
             self.driver.get("https://zisu.huitu.zhishulib.com/")
-            logging.debug('打开网站.')
-
+            logging.info('成功打开网站.')
             self.wait.until(EC.presence_of_element_located((By.NAME, "login_name")))
-            logging.debug('找到用户名输入框.')
-
             self.wait.until(EC.presence_of_element_located((By.XPATH, pwd_path_selector)))
-            logging.debug('找到密码输入框.')
-
-            self.wait.until(EC.presence_of_element_located((By.XPATH, button_path_selector)))
-            logging.debug('找到登录按钮.')
-
-            self.driver.find_element(By.NAME, 'login_name').clear()
-            self.driver.find_element(By.NAME, 'login_name').send_keys(self.un)  # 传送帐号
+            self.wait.until(EC.element_to_be_clickable((By.XPATH, button_path_selector)))
+            self.driver.find_element(By.NAME, 'login_name').send_keys(self.un)
             logging.info('输入用户名')
-
-            self.driver.find_element(By.XPATH, pwd_path_selector).clear()
-            self.driver.find_element(By.XPATH, pwd_path_selector).send_keys(self.pd)  # 输入密码
+            self.driver.find_element(By.XPATH, pwd_path_selector).send_keys(self.pd)
             logging.info('输入密码')
-            logging.info('点击登录按钮')
             self.driver.find_element(By.XPATH, button_path_selector).click()
+            logging.info('点击登录按钮')
             time.sleep(5)
             cookie_list = self.driver.get_cookies()
-            self.cookie = ";".join([item["name"] + "=" + item["value"] + "" for item in cookie_list])
+            self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
             self.cfg["headers"]['Cookie'] = self.cookie
-
             logging.info("登录成功！")
+            return 0
         except Exception as e:
             logging.error(f"登录失败：{e}")
             return -1
-        return 0
 
     def get_user_info(self):
-        logging.info('Getting user info')
-
+        logging.info('获取用户信息...')
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
         try:
-            resp = requests.get("https://zisu.huitu.zhishulib.com/Seat/Index/searchSeats?LAB_JSON=1",
-                                headers=headers)
+            resp = requests.get("https://zisu.huitu.zhishulib.com/Seat/Index/searchSeats?LAB_JSON=1", headers=headers)
             self.user_data = resp.json()['DATA']
-            _ = self.user_data['uid']
+            if 'uid' not in self.user_data:
+                 raise KeyError("Response JSON does not contain 'uid'")
+            logging.info("获取用户数据成功")
+            return 0
         except Exception as e:
-            logging.exception(e)
-            print(self.user_data)
-            print(e.__class__.__name__ + ",获取用户数据失败")
+            logging.error(f"获取用户数据失败: {e}")
+            logging.error(f"收到的响应: {resp.text if 'resp' in locals() else 'No response'}")
             return -1
-        print("获取用户数据成功")
-        return 0
 
-    def wechatNotice(self, message, desp=None):
-        logging.info('Sending WeChat notice')
+    def book_seat(self, start_hour, duration_hours, user_config):
+        logging.info(f'开始抢座: {start_hour}:00, 持续 {duration_hours} 小时')
+        seat_to_book = user_config['自定义'][0]
+        book_date = datetime.now() + timedelta(days=1)
+        book_time_obj = book_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        delta = book_time_obj - self.cfg["start-time"]
+        total_seconds = delta.days * 24 * 3600 + delta.seconds
+        data = f"beginTime={total_seconds}&duration={3600 * duration_hours}&seats[0]={seat_to_book}&seatBookers[0]={self.user_data['uid']}"
+        headers = self.cfg["headers"]
+        headers['Cookie'] = self.cookie
 
-        if self.SCKey != '':
-            url = 'https://sctapi.ftqq.com/{0}.send'.format(self.SCKey)
-            data = {
-                'title': message,
-                desp: desp,
-            }
+        for i in range(self.cfg["max-retry"]):
+            try:
+                print(f"第 {i+1}/{self.cfg['max-retry']} 次尝试抢座: {start_hour}:00...")
+                resp = requests.post(self.cfg["target"], data=data, headers=headers)
+                resp_json = resp.json()
+                print(f"收到响应: {resp_json}")
+                if resp_json.get("CODE") == "ok":
+                    message = f"成功抢到座位: {seat_to_book} at {start_hour}:00"
+                    logging.info(message)
+                    return True, message
+                else:
+                    time.sleep(0.5)
+            except Exception as e:
+                logging.error(f"请求时发生错误: {e}")
+                time.sleep(1)
+
+        final_message = f"抢座失败: {start_hour}:00 - {resp_json.get('MESSAGE', '未知错误')}"
+        logging.warning(final_message)
+        return False, final_message
+
+    def wechatNotice(self, title, desp):
+        logging.info('发送 Server酱 通知')
+        if self.SCKey:
+            url = f'https://sctapi.ftqq.com/{self.SCKey}.send'
+            data = {'title': title, 'desp': desp}
             try:
                 r = requests.post(url, data=data)
-                if r.json()["data"]["error"] == 'SUCCESS':
+                result = r.json()
+                if result.get("data", {}).get("error") == 'SUCCESS':
                     print("Server酱通知成功")
                 else:
-                    print("Server酱通知失败")
+                    print(f"Server酱通知失败: {result}")
             except Exception as e:
-                logging.exception(e)
-                print(e.__class__, "推送服务配置错误")
-
-def is_booking_enable(date_cfg):
-    if date_cfg['启用']:
-        return True
-    return False
+                logging.error(f"推送服务配置错误: {e}")
 
 if __name__ == "__main__":
-    logging.info('Start of the program')
-    with open("user_config.yml", 'r') as f_obj:
+    logging.info('====== 开始执行抢座脚本 ======')
+    
+    with open("user_config.yml", 'r', encoding='utf-8') as f_obj:
         user_config = yaml.safe_load(f_obj)
-    with open("config/basic_config.yml", 'r') as f_obj:
+    with open("config/basic_config.yml", 'r', encoding='utf-8') as f_obj:
         basic_config = yaml.safe_load(f_obj)
-    with open("config/seat_config.yml", 'r') as f_obj:
-        seat_config = yaml.safe_load(f_obj)
 
-    the_day_after_tomorrow = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][(datetime.now().weekday() + 2) % 7]
-    if not is_booking_enable(user_config[the_day_after_tomorrow]):
-        logging.info('预约未启用')
-        print("预约未启用")
+    if not user_config.get('enabled', False):
+        logging.info('抢座功能未在 user_config.yml 中启用，脚本退出。')
         exit(0)
 
+    # --- 步骤一：提前登录并准备好信息 ---
     s = SeatAutoBooker(basic_config["SeatAutoBooker"])
-    if not s.login() == 0:
+    if s.login() != 0:
+        s.wechatNotice("HDU抢座失败", "登录失败，请检查账号密码或网站更新。")
         s.driver.quit()
-        logging.info('Login unsuccessful')
         exit(-1)
-    if not s.get_user_info() == 0:
+        
+    if s.get_user_info() != 0:
+        s.wechatNotice("HDU抢座失败", "获取用户信息失败，Cookie可能已过期。")
         s.driver.quit()
-        logging.info('Getting user info unsuccessful')
         exit(-1)
-    s.book_favorite_seat(user_config=user_config, seat_config=seat_config)
+
+    # --- ★★★ 步骤二：进入精确时间等待循环 ★★★ ---
+    logging.info(f"登录成功，准备等待到 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
+    target_time = datetime.now().replace(hour=TARGET_HOUR, minute=TARGET_MINUTE, second=0, microsecond=0)
+    
+    while True:
+        current_time = datetime.now()
+        if current_time >= target_time:
+            logging.info("目标时间已到，开始执行抢座！")
+            break
+        
+        remaining_seconds = (target_time - current_time).total_seconds()
+        # 打印倒计时，避免日志刷屏
+        if int(remaining_seconds) % 10 == 0:
+            logging.info(f"等待中... 距离目标时间还剩 {remaining_seconds:.2f} 秒")
+        
+        # 循环最后10秒时，提高检查频率
+        if remaining_seconds < 10:
+             time.sleep(0.05) # 50毫秒检查一次
+        else:
+             time.sleep(1) # 1秒检查一次
+    
+    # --- 步骤三：执行抢座 ---
+    results = []
+    # Slot 1: 8:00 AM for 6 hours
+    success1, msg1 = s.book_seat(start_hour=8, duration_hours=6, user_config=user_config)
+    results.append(msg1)
+    
+    time.sleep(1) # 抢完第一个后稍微停顿一下
+
+    # Slot 2: 2:00 PM (14:00) for 6 hours
+    success2, msg2 = s.book_seat(start_hour=14, duration_hours=6, user_config=user_config)
+    results.append(msg2)
+
+    # --- 步骤四：发送总结通知 ---
+    summary_title = "HDU抢座完成"
+    summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
+    print("\n--- 抢座总结 ---")
+    print(summary_desp)
+    print("--------------------")
+    s.wechatNotice(summary_title, summary_desp)
+
     s.driver.quit()
-    logging.info('End of the program')
+    logging.info('====== 脚本执行完毕 ======')
