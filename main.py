@@ -72,7 +72,7 @@ class SeatAutoBooker:
             end_time = datetime.now().replace(hour=21-time_zone, minute=15, second=0, microsecond=0)
         start_time = start_time - timedelta(minutes=self.cfg["cron-delta-minutes"])
         if datetime.now() < start_time or datetime.now() > end_time:
-            return -1, "未到预约时间"
+            print( "未到预约时间")
         logging.info('Booking favorite seat')
         retry_sleep_time = timedelta(minutes=self.cfg["cron-delta-minutes"]).seconds*2/(self.cfg["max-retry"]-2) - 10
         for tried_times in range(self.cfg["max-retry"]):
