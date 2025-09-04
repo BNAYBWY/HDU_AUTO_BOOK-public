@@ -103,6 +103,7 @@ class SeatAutoBooker:
         print(data)
         self.resp = requests.post(self.cfg["target"], data=data, headers=headers)
         self.json = json.loads(self.resp.text)
+        print(self.json)
         return self.json["CODE"], self.json["MESSAGE"] + " 座位:{}".format(seat)
 
     def login(self):
