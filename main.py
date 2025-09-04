@@ -20,8 +20,8 @@ logging.basicConfig(
     level=logging.INFO)
 
 # --- ★★★ 新增：定义抢座目标时间 ★★★ ---
-TARGET_HOUR = 22  # 目标小时 (24小时制)
-TARGET_MINUTE = 30 # 目标分钟
+TARGET_HOUR = 14  # 目标小时 (24小时制)
+TARGET_MINUTE = 50 # 目标分钟
 
 class SeatAutoBooker:
     def __init__(self, booker_config):
