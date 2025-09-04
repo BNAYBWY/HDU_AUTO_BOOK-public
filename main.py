@@ -24,7 +24,7 @@ logging.basicConfig(
 
 # --- 定义抢座目标时间 (东八区时间) ---
 TARGET_HOUR = 15
-TARGET_MINUTE = 7
+TARGET_MINUTE = 16
 
 class SeatAutoBooker:
     # ... class内部直到 book_seat 方法前都无任何变化 ...
@@ -35,7 +35,7 @@ class SeatAutoBooker:
         self.un = os.environ["SCHOOL_ID"].strip()
         self.pd = os.environ["PASSWORD"].strip()
         self.SCKey = os.environ.get("SCKEY", "")
-        print(f"使用用户：{self.un}")
+        logging.info(f"使用用户：{self.un}")
 
         if not self.SCKey:
             print("没有Server酱的key,将不会推送消息")
@@ -120,12 +120,12 @@ class SeatAutoBooker:
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
 
-        for i in range(self.cfg["max-retry"]):
+        for i in range(3):
             try:
-                print(f"第 {i+1}/{self.cfg['max-retry']} 次尝试抢座: {start_hour}:00...")
+                logging.info(f"第 {i+1}/{3} 次尝试抢座: {start_hour}:00...")
                 resp = requests.post(self.cfg["target"], data=data, headers=headers)
                 resp_json = resp.json()
-                print(f"收到响应: {resp_json}")
+                logging.info(f"收到响应: {resp_json}")
                 if resp_json.get("CODE") == "ok":
                     message = f"成功抢到座位: {seat_to_book} at {start_hour}:00"
                     logging.info(message)
@@ -211,9 +211,9 @@ if __name__ == "__main__":
 
     summary_title = "HDU抢座完成"
     summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
-    print("\n--- 抢座总结 ---")
-    print(summary_desp)
-    print("--------------------")
+    logging.info("\n--- 抢座总结 ---")
+    logging.info(summary_desp)
+    logging.info("--------------------")
     s.wechatNotice(summary_title, summary_desp)
 
     s.driver.quit()
