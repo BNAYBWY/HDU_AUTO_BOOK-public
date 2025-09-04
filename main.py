@@ -6,6 +6,9 @@ import os
 import logging
 import time
 
+# ★★★ 新增：引入时区处理库 ★★★
+from zoneinfo import ZoneInfo
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -19,16 +22,16 @@ logging.basicConfig(
     datefmt='%H:%M:%S',
     level=logging.INFO)
 
-# --- ★★★ 新增：定义抢座目标时间 ★★★ ---
-TARGET_HOUR = 14  # 目标小时 (24小时制)
-TARGET_MINUTE = 50 # 目标分钟
+# --- 定义抢座目标时间 (东八区时间) ---
+TARGET_HOUR = 22  # 目标小时 (24小时制)
+TARGET_MINUTE = 30 # 目标分钟
 
 class SeatAutoBooker:
+    # ... 此 class 内的所有代码保持不变，无需修改 ...
     def __init__(self, booker_config):
         self.user_data = None
         logging.info('Creating SeatAutoBooker object')
 
-        # --- User Credentials from GitHub Secrets ---
         self.un = os.environ["SCHOOL_ID"].strip()
         self.pd = os.environ["PASSWORD"].strip()
         self.SCKey = os.environ.get("SCKEY", "")
@@ -37,7 +40,6 @@ class SeatAutoBooker:
         if not self.SCKey:
             print("没有Server酱的key,将不会推送消息")
 
-        # --- Selenium WebDriver Setup ---
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
@@ -93,7 +95,8 @@ class SeatAutoBooker:
     def book_seat(self, start_hour, duration_hours, user_config):
         logging.info(f'开始抢座: {start_hour}:00, 持续 {duration_hours} 小时')
         seat_to_book = user_config['自定义'][0]
-        book_date = datetime.now() + timedelta(days=1)
+        # 使用带时区的now()以确保日期正确
+        book_date = datetime.now(ZoneInfo("Asia/Shanghai")) + timedelta(days=1)
         book_time_obj = book_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         delta = book_time_obj - self.cfg["start-time"]
         total_seconds = delta.days * 24 * 3600 + delta.seconds
@@ -136,6 +139,7 @@ class SeatAutoBooker:
             except Exception as e:
                 logging.error(f"推送服务配置错误: {e}")
 
+
 if __name__ == "__main__":
     logging.info('====== 开始执行抢座脚本 ======')
     
@@ -160,40 +164,43 @@ if __name__ == "__main__":
         s.driver.quit()
         exit(-1)
 
-    # --- ★★★ 步骤二：进入精确时间等待循环 ★★★ ---
-    logging.info(f"登录成功，准备等待到 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
-    target_time = datetime.now().replace(hour=TARGET_HOUR, minute=TARGET_MINUTE, second=0, microsecond=0)
+    # --- ★★★ 步骤二：进入基于东八区时间的精确等待循环 ★★★ ---
+    tz_cst = ZoneInfo("Asia/Shanghai") # 定义东八区时区
+    logging.info(f"登录成功，准备等待到北京时间 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
     
+    # 获取当前的东八区时间，并设置今天的目标时间点
+    now_cst = datetime.now(tz_cst)
+    target_time = now_cst.replace(hour=TARGET_HOUR, minute=TARGET_MINUTE, second=0, microsecond=0)
+
     while True:
-        current_time = datetime.now()
-        if current_time >= target_time:
-            logging.info("目标时间已到，开始执行抢座！")
+        # 实时获取东八区时间进行比较
+        current_time_cst = datetime.now(tz_cst)
+        if current_time_cst >= target_time:
+            logging.info(f"北京时间 {current_time_cst.strftime('%H:%M:%S')} 已到，开始执行抢座！")
             break
         
-        remaining_seconds = (target_time - current_time).total_seconds()
-        # 打印倒计时，避免日志刷屏
-        if int(remaining_seconds) % 10 == 0:
-            logging.info(f"等待中... 距离目标时间还剩 {remaining_seconds:.2f} 秒")
+        remaining_seconds = (target_time - current_time_cst).total_seconds()
         
-        # 循环最后10秒时，提高检查频率
-        if remaining_seconds < 10:
-             time.sleep(0.05) # 50毫秒检查一次
+        # 打印倒计时，避免日志刷屏
+        if int(remaining_seconds) % 10 == 0 and int(remaining_seconds) > 0:
+            logging.info(f"等待中... 距离目标时间还剩 {remaining_seconds:.0f} 秒")
+            time.sleep(1) # 避免在同一秒内重复打印
+        elif remaining_seconds < 10:
+             time.sleep(0.05) # 最后10秒，高频检查
         else:
-             time.sleep(1) # 1秒检查一次
+             time.sleep(1) # 平时每秒检查一次
     
     # --- 步骤三：执行抢座 ---
+    # (此部分无变化)
     results = []
-    # Slot 1: 8:00 AM for 6 hours
     success1, msg1 = s.book_seat(start_hour=8, duration_hours=6, user_config=user_config)
     results.append(msg1)
-    
-    time.sleep(1) # 抢完第一个后稍微停顿一下
-
-    # Slot 2: 2:00 PM (14:00) for 6 hours
+    time.sleep(1)
     success2, msg2 = s.book_seat(start_hour=14, duration_hours=6, user_config=user_config)
     results.append(msg2)
 
     # --- 步骤四：发送总结通知 ---
+    # (此部分无变化)
     summary_title = "HDU抢座完成"
     summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
     print("\n--- 抢座总结 ---")
