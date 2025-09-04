@@ -114,7 +114,7 @@ class SeatAutoBooker:
         try:
             logging.info('开始登陆...')
 
-            self.driver.get("https://hdu.huitu.zhishulib.com/")
+            self.driver.get("https://zisu.huitu.zhishulib.com/")
             logging.debug('打开网站.')
 
             self.wait.until(EC.presence_of_element_located((By.NAME, "login_name")))
@@ -152,7 +152,7 @@ class SeatAutoBooker:
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
         try:
-            resp = requests.get("https://hdu.huitu.zhishulib.com/Seat/Index/searchSeats?LAB_JSON=1",
+            resp = requests.get("https://zisu.huitu.zhishulib.com/Seat/Index/searchSeats?LAB_JSON=1",
                                 headers=headers)
             self.user_data = resp.json()['DATA']
             _ = self.user_data['uid']
