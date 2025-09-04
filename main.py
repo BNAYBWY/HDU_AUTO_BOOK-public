@@ -117,9 +117,9 @@ class SeatAutoBooker:
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
         logging.info(data)
-        for i in range(1):
+        for i in range(2):
             try:
-                logging.info(f"第 {i+1}/{1} 次尝试抢座: {start_hour}:00...")
+                logging.info(f"第 {i+1}/{2} 次尝试抢座: {start_hour}:00...")
                 resp = requests.post(self.cfg["target"], data=data, headers=headers)
                 resp_json = resp.json()
                 logging.info(f"收到响应: {resp_json}")
