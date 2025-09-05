@@ -173,15 +173,44 @@ if __name__ == "__main__":
         exit(0)
 
     s = SeatAutoBooker(basic_config["SeatAutoBooker"])
-    if s.login() != 0:
-        s.wechatNotice("HDU抢座失败", "登录失败，请检查账号密码或网站更新。")
+    login_success = False
+    for attempt in range(3):  # 最多尝试3次
+        logging.info(f"第 {attempt + 1}/3 次尝试登录...")
+        if s.login() == 0:
+            login_success = True
+            break
+        else:
+            if attempt < 2:  # 如果不是最后一次尝试
+                logging.warning(f"登录失败，{5}秒后重试...")
+                time.sleep(5)
+            
+    if not login_success:
+        s.wechatNotice("HDU抢座失败", "登录失败，已尝试3次，请检查账号密码或网站更新。")
         s.driver.quit()
         exit(-1)
-        
-    if s.get_user_info() != 0:
-        s.wechatNotice("HDU抢座失败", "获取用户信息失败，Cookie可能已过期。")
+    
+    # 获取用户信息重试逻辑
+    user_info_success = False
+    for attempt in range(3):  # 最多尝试3次
+        logging.info(f"第 {attempt + 1}/3 次尝试获取用户信息...")
+        if s.get_user_info() == 0:
+            user_info_success = True
+            break
+        else:
+            if attempt < 2:  # 如果不是最后一次尝试
+                logging.warning(f"获取用户信息失败，{3}秒后重试...")
+                time.sleep(3)
+                # 如果获取用户信息失败，可能需要重新登录
+                if attempt == 1:  # 第二次失败时尝试重新登录
+                    logging.info("尝试重新登录...")
+                    if s.login() != 0:
+                        logging.error("重新登录也失败了")
+                        
+    if not user_info_success:
+        s.wechatNotice("HDU抢座失败", "获取用户信息失败，已尝试3次，Cookie可能已过期。")
         s.driver.quit()
         exit(-1)
+
 
     # 此处的时区逻辑仅用于精确等待，是正确的
     tz_cst = ZoneInfo("Asia/Shanghai")
