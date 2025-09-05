@@ -32,6 +32,7 @@ class SeatAutoBooker:
         self.user_data = None
         logging.info('Creating SeatAutoBooker object')
 
+
         self.un = os.environ["SCHOOL_ID"].strip()
         self.pd = os.environ["PASSWORD"].strip()
         self.SCKey = os.environ.get("SCKEY", "")
@@ -97,30 +98,35 @@ class SeatAutoBooker:
         seat_to_book = user_config['自定义'][0]
         
         # ★★★ 核心修正 ★★★
-        # 此处恢复为使用服务器的默认时间 (UTC) 来计算请求参数，以匹配API的期望。
-        # 这是一种 "naive" (无时区信息) 的时间计算方式。
+        # 使用北京时间来计算预约时间，确保 start_hour 对应的是北京时间
         
-        # 1. 获取服务器当前时间 (UTC)
-        utc_now = datetime.now() 
-        # 2. 基于UTC时间计算预约日期
-        book_date = utc_now + timedelta(days=1)
-        book_time_obj = book_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        # 1. 获取北京时间
+        tz_cst = ZoneInfo("Asia/Shanghai")
+        cst_now = datetime.now(tz_cst)
         
-        # 3. 使用无时区的 Unix Epoch 作为时间基准点
-        api_epoch_naive = datetime(1970, 1, 1)
+        # 2. 计算明天北京时间的预约时间点
+        book_date_cst = cst_now + timedelta(days=1)
+        book_time_cst = book_date_cst.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         
-        # 4. 在两个无时区的datetime对象之间进行计算，生成API需要的秒数
-        delta = book_time_obj - api_epoch_naive
+        # 3. 转换为UTC时间戳（API通常期望UTC时间戳）
+        book_time_utc = book_time_cst.astimezone(ZoneInfo("UTC"))
+        
+        # 4. 计算Unix时间戳
+        api_epoch_utc = datetime(1970, 1, 1, tzinfo=ZoneInfo("UTC"))
+        delta = book_time_utc - api_epoch_utc
         total_seconds = int(delta.total_seconds())
+        
+        logging.info(f"预约时间: 北京时间 {book_time_cst.strftime('%Y-%m-%d %H:%M:%S')} -> UTC时间戳 {total_seconds}")
         
         data = f"beginTime={total_seconds}&duration={3600 * duration_hours}&seats[0]={seat_to_book}&seatBookers[0]={self.user_data['uid']}"
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
         logging.info(data)
-        for i in range(2):
+        for i in range(3):
             try:
-                logging.info(f"第 {i+1}/{2} 次尝试抢座: {start_hour}:00...")
+                logging.info(f"第 {i+1}/{3} 次尝试抢座: {start_hour}:00...")
                 resp = requests.post(self.cfg["target"], data=data, headers=headers)
+                # resp_json = {}
                 resp_json = resp.json()
                 logging.info(f"收到响应: {resp_json}")
                 if resp_json.get("CODE") == "ok":
