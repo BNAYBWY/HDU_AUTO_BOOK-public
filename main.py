@@ -5,7 +5,7 @@ import json
 import os
 import logging
 import time
-
+import threading # <-- 只需在这里添加这一行
 # 引入时区处理库
 from zoneinfo import ZoneInfo
 
@@ -235,12 +235,36 @@ if __name__ == "__main__":
         else:
              time.sleep(1)
     
+    # --- 新的并发代码 ---
     results = []
-    success1, msg1 = s.book_seat(start_hour=8, duration_hours=6, user_config=user_config)
-    results.append(msg1)
+    thread_results = {} # 用于从线程中获取返回值的字典
+    
+    # 定义一个简单的函数，以便在线程中调用 book_seat 并存储结果
+    def run_booking(start_hour):
+        success, msg = s.book_seat(start_hour=start_hour, duration_hours=6, user_config=user_config)
+        thread_results[start_hour] = (success, msg)
+    
+    # 创建线程
+    thread1 = threading.Thread(target=run_booking, args=(8,))
+    thread2 = threading.Thread(target=run_booking, args=(14,))
+    
+    # 启动第一个线程
+    thread1.start()
+    # 间隔1秒后启动第二个线程
     time.sleep(1)
-    success2, msg2 = s.book_seat(start_hour=14, duration_hours=6, user_config=user_config)
+    thread2.start()
+    
+    # 等待两个线程都执行完毕
+    thread1.join()
+    thread2.join()
+    
+    # 从字典中取出结果，并赋给原来的变量，确保后续代码不受影响
+    success1, msg1 = thread_results.get(8, (False, "早上场次线程未成功返回结果"))
+    success2, msg2 = thread_results.get(14, (False, "下午场次线程未成功返回结果"))
+    
+    results.append(msg1)
     results.append(msg2)
+    # --- 修改结束 ---
 
     summary_title = "HDU抢座完成"
     summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
