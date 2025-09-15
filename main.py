@@ -238,7 +238,7 @@ if __name__ == "__main__":
     results = []
     success1, msg1 = s.book_seat(start_hour=8, duration_hours=5, user_config=user_config)
     success2, msg2 = s.book_seat(start_hour=13, duration_hours=5, user_config=user_config)
-    success3, msg3 = s.book_seat(start_hour=18, duration_hours=5, user_config=user_config)
+    success3, msg3 = s.book_seat(start_hour=18, duration_hours=4, user_config=user_config)
     results.append(msg1)
     results.append(msg2)
     results.append(msg3)
