@@ -23,8 +23,8 @@ logging.basicConfig(
     level=logging.INFO)
 
 # --- 定义抢座目标时间 (东八区时间) ---
-TARGET_HOUR = 22
-TARGET_MINUTE = 30
+TARGET_HOUR = 20
+TARGET_MINUTE = 00
 
 class SeatAutoBooker:
     # ... class内部直到 book_seat 方法前都无任何变化 ...
@@ -56,7 +56,7 @@ class SeatAutoBooker:
         button_path_selector = """//*[@id="react-root"]/div/div/div[1]/div[2]/div/div[1]/div[2]/div/div/div/div/div[1]/div[3]"""
 
         try:
-            self.driver.get("https://zisu.huitu.zhishulib.com/")
+            self.driver.get("https://hdu.huitu.zhishulib.com/")
             logging.info('成功打开网站.')
             self.wait.until(EC.presence_of_element_located((By.NAME, "login_name")))
             self.wait.until(EC.presence_of_element_located((By.XPATH, pwd_path_selector)))
@@ -82,7 +82,7 @@ class SeatAutoBooker:
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
         try:
-            resp = requests.get("https://zisu.huitu.zhishulib.com/Seat/Index/searchSeats?LAB_JSON=1", headers=headers)
+            resp = requests.get("https://hdu.huitu.zhishulib.com/Seat/Index/searchSeats?LAB_JSON=1", headers=headers)
             self.user_data = resp.json()['DATA']
             if 'uid' not in self.user_data:
                  raise KeyError("Response JSON does not contain 'uid'")
@@ -236,12 +236,8 @@ if __name__ == "__main__":
              time.sleep(1)
     
     results = []
-    success1, msg1 = s.book_seat(start_hour=8, duration_hours=14, user_config=user_config)
-    # success2, msg2 = s.book_seat(start_hour=13, duration_hours=5, user_config=user_config)
-    # success3, msg3 = s.book_seat(start_hour=18, duration_hours=4, user_config=user_config)
+    success1, msg1 = s.book_seat(start_hour=9, duration_hours=11, user_config=user_config)
     # results.append(msg1)
-    # results.append(msg2)
-    # results.append(msg3)
     # summary_title = "HDU抢座完成"
     # summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
     # print("\n--- 抢座总结 ---")
