@@ -236,18 +236,18 @@ if __name__ == "__main__":
              time.sleep(1)
     
     results = []
-    success1, msg1 = s.book_seat(start_hour=8, duration_hours=5, user_config=user_config)
-    success2, msg2 = s.book_seat(start_hour=13, duration_hours=5, user_config=user_config)
-    success3, msg3 = s.book_seat(start_hour=18, duration_hours=4, user_config=user_config)
-    results.append(msg1)
-    results.append(msg2)
-    results.append(msg3)
-    summary_title = "HDU抢座完成"
-    summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
-    print("\n--- 抢座总结 ---")
-    print(summary_desp)
-    print("--------------------")
-    s.wechatNotice(summary_title, summary_desp)
+    success1, msg1 = s.book_seat(start_hour=8, duration_hours=14, user_config=user_config)
+    # success2, msg2 = s.book_seat(start_hour=13, duration_hours=5, user_config=user_config)
+    # success3, msg3 = s.book_seat(start_hour=18, duration_hours=4, user_config=user_config)
+    # results.append(msg1)
+    # results.append(msg2)
+    # results.append(msg3)
+    # summary_title = "HDU抢座完成"
+    # summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
+    # print("\n--- 抢座总结 ---")
+    # print(summary_desp)
+    # print("--------------------")
+    # s.wechatNotice(summary_title, summary_desp)
 
-    s.driver.quit()
+    # s.driver.quit()
     logging.info('====== 脚本执行完毕 ======')
