@@ -105,7 +105,7 @@ class SeatAutoBooker:
         cst_now = datetime.now(tz_cst)
         
         # 2. 计算明天北京时间的预约时间点
-        book_date_cst = cst_now + timedelta(days=1)
+        book_date_cst = cst_now + timedelta(days=2)
         book_time_cst = book_date_cst.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         
         # 3. 转换为UTC时间戳（API通常期望UTC时间戳）
