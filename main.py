@@ -95,7 +95,7 @@ class SeatAutoBooker:
 
     def book_seat(self, start_hour, duration_hours, user_config):
         logging.info(f'开始抢座: {start_hour}:00, 持续 {duration_hours} 小时')
-        seat_to_book = user_config['自定义'][0]
+        seat_to_book = user_config['自定义'][1]
         
         # ★★★ 核心修正 ★★★
         # 使用北京时间来计算预约时间，确保 start_hour 对应的是北京时间
