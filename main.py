@@ -105,7 +105,7 @@ class SeatAutoBooker:
         cst_now = datetime.now(tz_cst)
         
         # 2. 计算明天北京时间的预约时间点
-        book_date_cst = cst_now + timedelta(days=2)
+        book_date_cst = cst_now + timedelta(days=1)
         book_time_cst = book_date_cst.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         
         # 3. 转换为UTC时间戳（API通常期望UTC时间戳）
@@ -236,7 +236,7 @@ if __name__ == "__main__":
              time.sleep(1)
     
     results = []
-    success1, msg1 = s.book_seat(start_hour=9, duration_hours=11, user_config=user_config)
+    success1, msg1 = s.book_seat(start_hour=8, duration_hours=13, user_config=user_config)
     # results.append(msg1)
     # summary_title = "HDU抢座完成"
     # summary_desp = f"早上场次: {msg1}\n\n下午场次: {msg2}"
