@@ -60,7 +60,7 @@ class SeatAutoBooker:
     def login(self):
         logging.info('开始登陆...')
         try:
-            self.driver.get("https://sso.hdu.edu.cn/login?service=https:%2F%2Fhdu.huitu.zhishulib.com%2FUser%2FIndex%2FhduCASLogin%3Fforward%3D%252FSpace%252FCategory%252Flist%253Fcategory_id%253D591")
+            self.driver.get("https://hdu.huitu.zhishulib.com")
             logging.info('成功打开HDU统一认证登录页面.')
             
             # 等待页面完全加载
