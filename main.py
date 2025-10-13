@@ -27,11 +27,9 @@ TARGET_HOUR = 20
 TARGET_MINUTE = 00
 
 class SeatAutoBooker:
-    # ... class内部直到 book_seat 方法前都无任何变化 ...
     def __init__(self, booker_config):
         self.user_data = None
         logging.info('Creating SeatAutoBooker object')
-
 
         self.un = os.environ["SCHOOL_ID"].strip()
         self.pd = os.environ["PASSWORD"].strip()
@@ -52,29 +50,158 @@ class SeatAutoBooker:
 
     def login(self):
         logging.info('开始登陆...')
-        pwd_path_selector = """//*[@id="react-root"]/div/div/div[1]/div[2]/div/div[1]/div[2]/div/div/div/div/div[1]/div[2]/div/div[3]/div/div[2]/input"""
-        button_path_selector = """//*[@id="react-root"]/div/div/div[1]/div[2]/div/div[1]/div[2]/div/div/div/div/div[1]/div[3]"""
-
         try:
             self.driver.get("https://sso.hdu.edu.cn/login?service=https:%2F%2Fhdu.huitu.zhishulib.com%2FUser%2FIndex%2FhduCASLogin%3Fforward%3D%252FSpace%252FCategory%252Flist%253Fcategory_id%253D591")
-            logging.info('成功打开网站.')
-            self.wait.until(EC.presence_of_element_located((By.NAME, "login_name")))
-            self.wait.until(EC.presence_of_element_located((By.XPATH, pwd_path_selector)))
-            self.wait.until(EC.element_to_be_clickable((By.XPATH, button_path_selector)))
-            self.driver.find_element(By.NAME, 'login_name').send_keys(self.un)
+            logging.info('成功打开HDU统一认证登录页面.')
+            
+            # 等待页面元素加载 - 使用HDU统一认证系统的选择器
+            self.wait.until(EC.presence_of_element_located((By.ID, "username")))
+            self.wait.until(EC.presence_of_element_located((By.ID, "password")))
+            self.wait.until(EC.element_to_be_clickable((By.CLASS_NAME, "btn-submit")))
+            logging.info('页面元素加载完成')
+            
+            # 输入用户名和密码
+            username_input = self.driver.find_element(By.ID, 'username')
+            username_input.clear()
+            username_input.send_keys(self.un)
             logging.info('输入用户名')
-            self.driver.find_element(By.XPATH, pwd_path_selector).send_keys(self.pd)
+            
+            password_input = self.driver.find_element(By.ID, 'password')
+            password_input.clear()
+            password_input.send_keys(self.pd)
             logging.info('输入密码')
-            self.driver.find_element(By.XPATH, button_path_selector).click()
+            
+            # 点击登录按钮
+            login_button = self.driver.find_element(By.CLASS_NAME, 'btn-submit')
+            login_button.click()
             logging.info('点击登录按钮')
+            
+            # 等待登录完成和页面跳转
             time.sleep(5)
-            cookie_list = self.driver.get_cookies()
-            self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
-            self.cfg["headers"]['Cookie'] = self.cookie
-            logging.info("登录成功！")
-            return 0
+            
+            # 检查是否登录成功并跳转到目标网站
+            current_url = self.driver.current_url
+            if "hdu.huitu.zhishulib.com" in current_url:
+                logging.info("成功跳转到目标网站")
+                
+                # 获取Cookie
+                cookie_list = self.driver.get_cookies()
+                self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                self.cfg["headers"]['Cookie'] = self.cookie
+                logging.info("登录成功！")
+                logging.info(f"获取到的Cookie长度: {len(self.cookie)}")
+                return 0
+            else:
+                logging.error(f"登录后未成功跳转，当前URL: {current_url}")
+                # 尝试备选选择器
+                return self.alternative_login()
+                
         except Exception as e:
-            logging.error(f"登录失败：{e}")
+            logging.error(f"主登录方法失败：{e}，尝试备选登录方法")
+            return self.alternative_login()
+
+    def alternative_login(self):
+        """备选登录方法，使用不同的选择器"""
+        try:
+            logging.info("尝试备选登录方法...")
+            
+            # 备选选择器方案
+            username_selectors = [
+                (By.ID, "username"),
+                (By.NAME, "username"),
+                (By.XPATH, "//input[@type='text']"),
+                (By.XPATH, "//input[@placeholder='用户名/学工号']")
+            ]
+            
+            password_selectors = [
+                (By.ID, "password"),
+                (By.NAME, "password"), 
+                (By.XPATH, "//input[@type='password']")
+            ]
+            
+            submit_selectors = [
+                (By.CLASS_NAME, "btn-submit"),
+                (By.XPATH, "//button[@type='submit']"),
+                (By.XPATH, "//input[@type='submit']"),
+                (By.XPATH, "//button[contains(text(), '登录')]")
+            ]
+            
+            # 查找用户名输入框
+            username_input = None
+            for selector in username_selectors:
+                try:
+                    username_input = self.driver.find_element(*selector)
+                    logging.info(f"找到用户名输入框: {selector}")
+                    break
+                except:
+                    continue
+            
+            if not username_input:
+                raise Exception("未找到用户名输入框")
+                
+            username_input.clear()
+            username_input.send_keys(self.un)
+            logging.info('输入用户名成功')
+            
+            # 查找密码输入框
+            password_input = None
+            for selector in password_selectors:
+                try:
+                    password_input = self.driver.find_element(*selector)
+                    logging.info(f"找到密码输入框: {selector}")
+                    break
+                except:
+                    continue
+                    
+            if not password_input:
+                raise Exception("未找到密码输入框")
+                
+            password_input.clear()
+            password_input.send_keys(self.pd)
+            logging.info('输入密码成功')
+            
+            # 查找登录按钮
+            submit_button = None
+            for selector in submit_selectors:
+                try:
+                    submit_button = self.driver.find_element(*selector)
+                    logging.info(f"找到登录按钮: {selector}")
+                    break
+                except:
+                    continue
+                    
+            if not submit_button:
+                raise Exception("未找到登录按钮")
+                
+            submit_button.click()
+            logging.info('点击登录按钮成功')
+            
+            # 等待登录完成
+            time.sleep(5)
+            
+            # 再次检查是否成功跳转
+            current_url = self.driver.current_url
+            if "hdu.huitu.zhishulib.com" in current_url:
+                logging.info("备选方法：成功跳转到目标网站")
+                
+                # 获取Cookie
+                cookie_list = self.driver.get_cookies()
+                self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                self.cfg["headers"]['Cookie'] = self.cookie
+                logging.info("备选方法登录成功！")
+                return 0
+            else:
+                logging.error(f"备选方法登录后未成功跳转，当前URL: {current_url}")
+                # 保存截图以便调试
+                self.driver.save_screenshot("login_error.png")
+                logging.info("已保存登录错误截图: login_error.png")
+                return -1
+                
+        except Exception as e:
+            logging.error(f"备选登录方法也失败：{e}")
+            # 保存截图以便调试
+            self.driver.save_screenshot("login_error_final.png")
+            logging.info("已保存最终登录错误截图: login_error_final.png")
             return -1
 
     def get_user_info(self):
