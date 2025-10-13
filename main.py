@@ -56,7 +56,7 @@ class SeatAutoBooker:
         button_path_selector = """//*[@id="react-root"]/div/div/div[1]/div[2]/div/div[1]/div[2]/div/div/div/div/div[1]/div[3]"""
 
         try:
-            self.driver.get("https://hdu.huitu.zhishulib.com/")
+            self.driver.get("https://sso.hdu.edu.cn/login?service=https:%2F%2Fhdu.huitu.zhishulib.com%2FUser%2FIndex%2FhduCASLogin%3Fforward%3D%252FSpace%252FCategory%252Flist%253Fcategory_id%253D591")
             logging.info('成功打开网站.')
             self.wait.until(EC.presence_of_element_located((By.NAME, "login_name")))
             self.wait.until(EC.presence_of_element_located((By.XPATH, pwd_path_selector)))
