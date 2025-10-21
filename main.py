@@ -57,53 +57,177 @@ class SeatAutoBooker:
         self.cookie = None
         self.cfg = booker_config
 
+    def wait_for_redirect(self, target_domain, timeout=30):
+        """等待页面重定向到目标域名"""
+        logging.info(f"等待重定向到包含 '{target_domain}' 的页面，超时时间: {timeout}秒")
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            current_url = self.driver.current_url
+            logging.info(f"当前URL: {current_url}")
+            
+            if target_domain in current_url:
+                logging.info(f"✓ 成功重定向到目标页面: {current_url}")
+                return True
+            
+            # 检查页面是否包含目标网站的元素
+            try:
+                page_source = self.driver.page_source
+                if target_domain in page_source:
+                    logging.info(f"在页面源码中发现目标域名，可能已加载")
+                    return True
+            except Exception as e:
+                logging.warning(f"检查页面源码时出错: {e}")
+            
+            # 检查是否有错误页面
+            if "error" in current_url.lower() or "404" in page_source:
+                logging.error("检测到错误页面，停止等待重定向")
+                return False
+                
+            time.sleep(1)
+        
+        logging.warning(f"在{timeout}秒内未重定向到目标页面，当前URL: {self.driver.current_url}")
+        return False
+
+    def check_page_state(self):
+        """检查页面状态"""
+        try:
+            # 检查页面标题或特定元素来确定是否在正确页面
+            page_title = self.driver.title
+            logging.info(f"页面标题: {page_title}")
+            
+            # 检查URL
+            current_url = self.driver.current_url
+            logging.info(f"当前URL: {current_url}")
+            
+            # 检查是否有登录表单
+            login_forms = self.driver.find_elements(By.TAG_NAME, "form")
+            logging.info(f"找到 {len(login_forms)} 个表单")
+            
+            # 检查页面内容关键词
+            page_text = self.driver.page_source.lower()
+            keywords = ['login', 'signin', '用户名', '密码', '统一身份认证', '图书馆', '座位']
+            found_keywords = [kw for kw in keywords if kw in page_text]
+            logging.info(f"页面包含关键词: {found_keywords}")
+            
+            return current_url, page_title, found_keywords
+            
+        except Exception as e:
+            logging.error(f"检查页面状态失败: {e}")
+            return None, None, []
+
+    def save_debug_info(self, filename_prefix):
+        """保存调试信息"""
+        try:
+            # 保存截图
+            screenshot_path = f"{filename_prefix}_screenshot.png"
+            self.driver.save_screenshot(screenshot_path)
+            logging.info(f"截图已保存: {screenshot_path}")
+            
+            # 保存页面源代码
+            source_path = f"{filename_prefix}_source.html"
+            with open(source_path, "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            logging.info(f"页面源码已保存: {source_path}")
+            
+            # 保存当前URL
+            logging.info(f"当前URL: {self.driver.current_url}")
+            
+        except Exception as e:
+            logging.error(f"保存调试信息失败: {e}")
+
     def login(self):
         logging.info('开始登陆...')
         try:
-            self.driver.get("https://hdu.huitu.zhishulib.com/#!/Space/Category/list")
-            logging.info('成功打开HDU统一认证登录页面.')
+            # 首先访问目标页面
+            target_url = "https://hdu.huitu.zhishulib.com/#!/Space/Category/list"
+            logging.info(f"访问目标URL: {target_url}")
+            self.driver.get(target_url)
             
-            # 等待页面完全加载
-            time.sleep(3)
+            # 立即检查页面状态
+            current_url, page_title, keywords = self.check_page_state()
+            logging.info(f"初始页面状态 - URL: {current_url}, 标题: {page_title}")
             
-            # 使用更灵活的元素定位策略
+            # 保存初始页面信息
+            self.save_debug_info("initial_page")
+            
+            # 等待页面加载
+            time.sleep(5)
+            
+            # 再次检查页面状态
+            current_url, page_title, keywords = self.check_page_state()
+            logging.info(f"等待后页面状态 - URL: {current_url}, 标题: {page_title}")
+            
+            # 如果已经在目标网站，直接获取cookie
+            if "hdu.huitu.zhishulib.com" in current_url:
+                logging.info("已在目标网站，无需登录")
+                cookie_list = self.driver.get_cookies()
+                self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                self.cfg["headers"]['Cookie'] = self.cookie
+                return 0
+            
             return self.enhanced_login_flow()
                 
         except Exception as e:
             logging.error(f"登录流程失败：{e}")
-            # 保存截图以便调试
-            self.driver.save_screenshot("login_initial_error.png")
+            self.save_debug_info("login_initial_error")
             return -1
 
     def enhanced_login_flow(self):
-        """增强的登录流程，包含多种尝试策略"""
+        """增强的登录流程，包含重定向等待"""
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 logging.info(f"尝试第 {attempt + 1}/{max_attempts} 种登录策略...")
                 
+                # 保存当前状态
+                self.save_debug_info(f"login_attempt_{attempt+1}_before")
+                
                 # 策略1: 使用JavaScript直接操作元素
                 if self.login_with_javascript():
-                    return 0
-                    
+                    # 等待重定向到目标网站
+                    if self.wait_for_redirect("hdu.huitu.zhishulib.com", timeout=15):
+                        self.save_debug_info(f"login_attempt_{attempt+1}_js_success")
+                        return 0
+                    else:
+                        logging.warning("JavaScript登录成功但未重定向到目标网站")
+                
                 # 策略2: 使用传统方式但增加等待
                 time.sleep(2)
                 if self.login_with_enhanced_wait():
-                    return 0
+                    # 等待重定向到目标网站
+                    if self.wait_for_redirect("hdu.huitu.zhishulib.com", timeout=15):
+                        self.save_debug_info(f"login_attempt_{attempt+1}_enhanced_success")
+                        return 0
+                    else:
+                        logging.warning("增强等待登录成功但未重定向到目标网站")
+                
+                # 策略3: 手动跳转到目标网站（最后一次尝试）
+                if attempt == max_attempts - 1:
+                    logging.info("尝试手动跳转到目标网站...")
+                    self.driver.get("https://hdu.huitu.zhishulib.com/")
+                    time.sleep(5)
                     
-                # 策略3: 刷新页面重试
-                if attempt < max_attempts - 1:
-                    logging.info("刷新页面重试...")
-                    self.driver.refresh()
-                    time.sleep(3)
-                    
+                    # 检查是否成功到达目标网站
+                    current_url = self.driver.current_url
+                    if "hdu.huitu.zhishulib.com" in current_url:
+                        logging.info("手动跳转成功")
+                        cookie_list = self.driver.get_cookies()
+                        self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                        self.cfg["headers"]['Cookie'] = self.cookie
+                        return 0
+                    else:
+                        logging.warning("手动跳转后仍未到达目标网站")
+                        
             except Exception as e:
                 logging.error(f"第 {attempt + 1} 种策略失败: {e}")
+                self.save_debug_info(f"login_attempt_{attempt+1}_error")
                 if attempt < max_attempts - 1:
-                    time.sleep(2)
+                    logging.info(f"{3}秒后重试...")
+                    time.sleep(3)
         
         logging.error("所有登录策略都失败了")
-        self.driver.save_screenshot("login_all_strategies_failed.png")
+        self.save_debug_info("login_all_strategies_failed")
         return -1
 
     def login_with_javascript(self):
@@ -111,9 +235,12 @@ class SeatAutoBooker:
         try:
             logging.info("尝试使用JavaScript登录...")
             
+            # 首先检查页面状态
+            current_url, page_title, keywords = self.check_page_state()
+            
             # 使用JavaScript查找并操作元素
             username_script = """
-            var inputs = document.querySelectorAll('input[type="text"], input[name="username"], input[id="username"]');
+            var inputs = document.querySelectorAll('input[type="text"], input[name="username"], input[id="username"], input[placeholder*="用户"], input[placeholder*="学工"], input[placeholder*="账号"]');
             for (var i = 0; i < inputs.length; i++) {
                 if (inputs[i].offsetParent !== null) {
                     return inputs[i];
@@ -123,7 +250,7 @@ class SeatAutoBooker:
             """
             
             password_script = """
-            var inputs = document.querySelectorAll('input[type="password"], input[name="password"], input[id="password"]');
+            var inputs = document.querySelectorAll('input[type="password"], input[name="password"], input[id="password"], input[placeholder*="密码"]');
             for (var i = 0; i < inputs.length; i++) {
                 if (inputs[i].offsetParent !== null) {
                     return inputs[i];
@@ -133,7 +260,7 @@ class SeatAutoBooker:
             """
             
             submit_script = """
-            var buttons = document.querySelectorAll('button[type="submit"], input[type="submit"], .btn-submit, .login-btn');
+            var buttons = document.querySelectorAll('button[type="submit"], input[type="submit"], .btn-submit, .login-btn, button[onclick*="login"], input[value*="登录"]');
             for (var i = 0; i < buttons.length; i++) {
                 if (buttons[i].offsetParent !== null && buttons[i].disabled === false) {
                     return buttons[i];
@@ -175,12 +302,7 @@ class SeatAutoBooker:
             # 等待登录完成
             time.sleep(5)
             
-            # 检查是否登录成功
-            if self.check_login_success():
-                return True
-            else:
-                logging.warning("JavaScript登录后未成功跳转")
-                return False
+            return True
                 
         except Exception as e:
             logging.error(f"JavaScript登录失败: {e}")
@@ -198,6 +320,7 @@ class SeatAutoBooker:
                 (By.XPATH, "//input[@type='text']"),
                 (By.XPATH, "//input[contains(@placeholder, '用户')]"),
                 (By.XPATH, "//input[contains(@placeholder, '学工')]"),
+                (By.XPATH, "//input[contains(@placeholder, '账号')]"),
                 (By.CSS_SELECTOR, "input[type='text']")
             ]
             
@@ -205,6 +328,7 @@ class SeatAutoBooker:
                 (By.ID, "password"),
                 (By.NAME, "password"), 
                 (By.XPATH, "//input[@type='password']"),
+                (By.XPATH, "//input[contains(@placeholder, '密码')]"),
                 (By.CSS_SELECTOR, "input[type='password']")
             ]
             
@@ -256,8 +380,7 @@ class SeatAutoBooker:
             # 等待登录完成
             time.sleep(5)
             
-            # 检查是否登录成功
-            return self.check_login_success()
+            return True
             
         except Exception as e:
             logging.error(f"增强等待登录失败: {e}")
@@ -275,7 +398,9 @@ class SeatAutoBooker:
                 except (NoSuchElementException, ElementNotInteractableException):
                     continue
             if attempt < max_attempts - 1:
+                logging.info(f"未找到元素，{1}秒后重试...")
                 time.sleep(1)
+        logging.warning(f"所有选择器都未找到元素: {selectors}")
         return None
 
     def check_login_success(self):
