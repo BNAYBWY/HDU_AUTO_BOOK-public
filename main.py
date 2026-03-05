@@ -445,6 +445,6 @@ if __name__ == "__main__":
              time.sleep(1)
     
     results = []
-    success1, msg1 = s.book_seat(start_hour=8, duration_hours=13, user_config=user_config)
+    success1, msg1 = s.book_seat(start_hour=9, duration_hours=13, user_config=user_config)
     
     logging.info('====== 脚本执行完毕 ======')
