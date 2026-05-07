@@ -1,4 +1,3 @@
-```python
 import os
 import time
 import yaml
@@ -620,4 +619,3 @@ if __name__ == "__main__":
     finally:
 
         s.quit()
-```
