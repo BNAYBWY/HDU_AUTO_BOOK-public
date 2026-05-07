@@ -320,7 +320,7 @@ class SeatAutoBooker:
         )
 
         if now >= target:
-            target += timedelta(days=1)
+            target += timedelta(days=2)
 
         logging.info(
             f"等待至北京时间: "
