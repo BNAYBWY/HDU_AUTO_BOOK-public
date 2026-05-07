@@ -26,7 +26,7 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(message)s'
 )
 
-TARGET_HOUR = 20
+TARGET_HOUR = 21
 TARGET_MINUTE = 0
 
 TZ_CST = ZoneInfo("Asia/Shanghai")
