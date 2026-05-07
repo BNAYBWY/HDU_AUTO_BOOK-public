@@ -5,6 +5,8 @@ import json
 import os
 import logging
 import time
+import random
+from functools import wraps
 
 # 引入时区处理库
 from zoneinfo import ZoneInfo
@@ -27,6 +29,33 @@ logging.basicConfig(
 TARGET_HOUR = 20
 TARGET_MINUTE = 00
 
+def retry_on_failure(max_retries=3, delay=1, backoff=2):
+    """重试装饰器"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            current_delay = delay
+            
+            while retries < max_retries:
+                try:
+                    result = func(*args, **kwargs)
+                    if result is not None and result != -1:
+                        return result
+                except Exception as e:
+                    logging.warning(f"函数 {func.__name__} 执行失败 (尝试 {retries + 1}/{max_retries}): {e}")
+                
+                retries += 1
+                if retries < max_retries:
+                    # 添加随机延迟避免反爬
+                    time.sleep(current_delay + random.uniform(0, 0.5))
+                    current_delay *= backoff
+            
+            logging.error(f"函数 {func.__name__} 在 {max_retries} 次尝试后仍然失败")
+            return -1
+        return wrapper
+    return decorator
+
 class SeatAutoBooker:
     def __init__(self, booker_config):
         self.user_data = None
@@ -46,257 +75,530 @@ class SeatAutoBooker:
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--window-size=1920,1080')
-        # 添加更多选项以提高稳定性
+        # GitHub Actions环境优化
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--disable-features=VizDisplayCompositor')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        self.driver = webdriver.Chrome(service=Service('/usr/local/bin/chromedriver'), options=chrome_options)
+        # 尝试多个可能的chromedriver路径
+        chromedriver_path = self.get_chromedriver_path()
+        logging.info(f"使用ChromeDriver: {chromedriver_path}")
+        
+        self.driver = webdriver.Chrome(service=Service(chromedriver_path), options=chrome_options)
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        self.wait = WebDriverWait(self.driver, 20, 0.5)  # 增加等待时间
+        self.driver.set_page_load_timeout(30)
+        self.wait = WebDriverWait(self.driver, 20, 0.5)
         self.cookie = None
         self.cfg = booker_config
 
-    def login(self):
-        logging.info('开始登陆...')
-        try:
-            self.driver.get("https://hdu.huitu.zhishulib.com/#!/Space/Category/list")
-            logging.info('成功打开HDU统一认证登录页面.')
-            
-            # 等待页面完全加载
-            time.sleep(3)
-            
-            # 使用更灵活的元素定位策略
-            return self.enhanced_login_flow()
-                
-        except Exception as e:
-            logging.error(f"登录流程失败：{e}")
-            # 保存截图以便调试
-            self.driver.save_screenshot("login_initial_error.png")
-            return -1
-
-    def enhanced_login_flow(self):
-        """增强的登录流程，包含多种尝试策略"""
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            try:
-                logging.info(f"尝试第 {attempt + 1}/{max_attempts} 种登录策略...")
-                
-                # 策略1: 使用JavaScript直接操作元素
-                if self.login_with_javascript():
-                    return 0
-                    
-                # 策略2: 使用传统方式但增加等待
-                time.sleep(2)
-                if self.login_with_enhanced_wait():
-                    return 0
-                    
-                # 策略3: 刷新页面重试
-                if attempt < max_attempts - 1:
-                    logging.info("刷新页面重试...")
-                    self.driver.refresh()
-                    time.sleep(3)
-                    
-            except Exception as e:
-                logging.error(f"第 {attempt + 1} 种策略失败: {e}")
-                if attempt < max_attempts - 1:
-                    time.sleep(2)
+    def get_chromedriver_path(self):
+        """获取chromedriver路径"""
+        import shutil
         
-        logging.error("所有登录策略都失败了")
-        self.driver.save_screenshot("login_all_strategies_failed.png")
+        # 检查PATH中的chromedriver
+        path = shutil.which('chromedriver')
+        if path:
+            return path
+        
+        # 常见路径
+        common_paths = [
+            '/usr/local/bin/chromedriver',
+            '/usr/bin/chromedriver',
+            './chromedriver',
+            '/snap/bin/chromedriver'
+        ]
+        
+        for p in common_paths:
+            if os.path.exists(p):
+                return p
+        
+        # 默认路径
+        return '/usr/local/bin/chromedriver'
+
+    @retry_on_failure(max_retries=3)
+    def login(self):
+        """优化的登录主方法"""
+        logging.info('开始登陆流程...')
+        
+        # 尝试多种登录页面URL
+        login_urls = [
+            "https://hdu.huitu.zhishulib.com/#!/Space/Category/list",
+            "https://hdu.huitu.zhishulib.com/",
+            "https://hdu.huitu.zhishulib.com/Space/Category/list"
+        ]
+        
+        for url in login_urls:
+            try:
+                logging.info(f"尝试访问: {url}")
+                self.driver.get(url)
+                time.sleep(3)
+                
+                # 保存调试信息
+                self.save_debug_info("initial")
+                
+                # 检查是否需要登录
+                if self.is_login_page():
+                    result = self.universal_login()
+                    if result == 0:
+                        return 0
+                else:
+                    # 可能已经登录
+                    cookie_list = self.driver.get_cookies()
+                    if cookie_list:
+                        self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                        self.cfg["headers"]['Cookie'] = self.cookie
+                        logging.info("使用已有Cookie登录成功")
+                        return 0
+                        
+            except Exception as e:
+                logging.error(f"访问 {url} 失败: {e}")
+                continue
+        
         return -1
-
-    def login_with_javascript(self):
-        """使用JavaScript直接操作元素的登录方式"""
+    
+    def is_login_page(self):
+        """判断是否在登录页面"""
         try:
-            logging.info("尝试使用JavaScript登录...")
+            page_source = self.driver.page_source.lower()
+            login_indicators = ['login', '统一认证', 'cas', 'auth', '用户名', '密码', 'signin']
+            return any(indicator in page_source for indicator in login_indicators)
+        except:
+            return True
+    
+    def universal_login(self):
+        """通用登录方法 - 适应各种页面结构"""
+        
+        # 等待页面稳定
+        self.wait_for_page_stable()
+        
+        # 策略1: 等待iframe并切换
+        if self.handle_iframe_login():
+            return 0
             
-            # 使用JavaScript查找并操作元素
-            username_script = """
-            var inputs = document.querySelectorAll('input[type="text"], input[name="username"], input[id="username"]');
-            for (var i = 0; i < inputs.length; i++) {
-                if (inputs[i].offsetParent !== null) {
-                    return inputs[i];
-                }
-            }
-            return null;
-            """
+        # 策略2: 多选择器轮询查找
+        if self.multi_selector_login():
+            return 0
             
-            password_script = """
-            var inputs = document.querySelectorAll('input[type="password"], input[name="password"], input[id="password"]');
-            for (var i = 0; i < inputs.length; i++) {
-                if (inputs[i].offsetParent !== null) {
-                    return inputs[i];
-                }
-            }
-            return null;
-            """
+        # 策略3: 执行JavaScript注入
+        if self.javascript_injection_login():
+            return 0
             
-            submit_script = """
-            var buttons = document.querySelectorAll('button[type="submit"], input[type="submit"], .btn-submit, .login-btn');
-            for (var i = 0; i < buttons.length; i++) {
-                if (buttons[i].offsetParent !== null && buttons[i].disabled === false) {
-                    return buttons[i];
-                }
-            }
-            return null;
-            """
+        return -1
+    
+    def wait_for_page_stable(self):
+        """等待页面稳定"""
+        try:
+            # 等待网络空闲
+            self.wait.until(lambda driver: driver.execute_script("return document.readyState") == "complete")
+            time.sleep(2)
             
-            # 查找用户名输入框
-            username_element = self.driver.execute_script(username_script)
-            if not username_element:
-                logging.warning("JavaScript未找到用户名输入框")
-                return False
-                
-            # 使用JavaScript设置用户名
-            self.driver.execute_script("arguments[0].value = arguments[1];", username_element, self.un)
-            logging.info('JavaScript设置用户名成功')
-            
-            # 查找密码输入框
-            password_element = self.driver.execute_script(password_script)
-            if not password_element:
-                logging.warning("JavaScript未找到密码输入框")
-                return False
-                
-            # 使用JavaScript设置密码
-            self.driver.execute_script("arguments[0].value = arguments[1];", password_element, self.pd)
-            logging.info('JavaScript设置密码成功')
-            
-            # 查找提交按钮
-            submit_element = self.driver.execute_script(submit_script)
-            if not submit_element:
-                logging.warning("JavaScript未找到提交按钮")
-                return False
-                
-            # 使用JavaScript点击提交按钮
-            self.driver.execute_script("arguments[0].click();", submit_element)
-            logging.info('JavaScript点击登录按钮成功')
-            
-            # 等待登录完成
-            time.sleep(5)
-            
-            # 检查是否登录成功
-            if self.check_login_success():
-                return True
-            else:
-                logging.warning("JavaScript登录后未成功跳转")
-                return False
-                
+            # 等待jQuery（如果存在）
+            try:
+                self.wait.until(lambda driver: driver.execute_script("return jQuery.active == 0"))
+            except:
+                pass
         except Exception as e:
-            logging.error(f"JavaScript登录失败: {e}")
-            return False
-
-    def login_with_enhanced_wait(self):
-        """使用增强等待的传统登录方式"""
+            logging.warning(f"等待页面稳定超时: {e}")
+    
+    def handle_iframe_login(self):
+        """处理iframe登录"""
         try:
-            logging.info("尝试使用增强等待登录...")
+            # 查找所有iframe
+            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            iframes.extend(self.driver.find_elements(By.TAG_NAME, "frame"))
             
-            # 定义多种可能的选择器
+            logging.info(f"找到 {len(iframes)} 个iframe/frame")
+            
+            for idx, iframe in enumerate(iframes):
+                try:
+                    logging.info(f"检查iframe {idx + 1}")
+                    self.driver.switch_to.frame(iframe)
+                    
+                    # 在当前iframe中查找登录表单
+                    if self.find_and_fill_login_form():
+                        self.driver.switch_to.default_content()
+                        return True
+                    
+                    self.driver.switch_to.default_content()
+                except Exception as e:
+                    logging.warning(f"切换iframe {idx + 1} 失败: {e}")
+                    self.driver.switch_to.default_content()
+                    continue
+                    
+            return False
+        except Exception as e:
+            logging.error(f"处理iframe失败: {e}")
+            return False
+    
+    def find_and_fill_login_form(self):
+        """查找并填写登录表单"""
+        try:
+            # 查找用户名框
             username_selectors = [
                 (By.ID, "username"),
                 (By.NAME, "username"),
-                (By.XPATH, "//input[@type='text']"),
-                (By.XPATH, "//input[contains(@placeholder, '用户')]"),
-                (By.XPATH, "//input[contains(@placeholder, '学工')]"),
-                (By.CSS_SELECTOR, "input[type='text']")
+                (By.CSS_SELECTOR, "input[type='text']"),
+                (By.XPATH, "//input[@placeholder]"),
             ]
             
+            for selector in username_selectors:
+                try:
+                    element = self.driver.find_element(*selector)
+                    if element.is_displayed() and element.is_enabled():
+                        self.fill_input_field(element, self.un)
+                        break
+                except:
+                    continue
+            
+            # 查找密码框
             password_selectors = [
                 (By.ID, "password"),
-                (By.NAME, "password"), 
-                (By.XPATH, "//input[@type='password']"),
-                (By.CSS_SELECTOR, "input[type='password']")
+                (By.NAME, "password"),
+                (By.CSS_SELECTOR, "input[type='password']"),
             ]
             
+            for selector in password_selectors:
+                try:
+                    element = self.driver.find_element(*selector)
+                    if element.is_displayed() and element.is_enabled():
+                        self.fill_input_field(element, self.pd)
+                        break
+                except:
+                    continue
+            
+            # 查找提交按钮
             submit_selectors = [
-                (By.CLASS_NAME, "btn-submit"),
                 (By.XPATH, "//button[@type='submit']"),
                 (By.XPATH, "//input[@type='submit']"),
                 (By.XPATH, "//button[contains(text(), '登录')]"),
-                (By.XPATH, "//input[contains(@value, '登录')]"),
-                (By.CSS_SELECTOR, "button[type='submit']")
             ]
             
-            # 查找并操作用户名输入框
-            username_element = self.find_element_with_retry(username_selectors)
-            if not username_element:
-                raise Exception("未找到用户名输入框")
-                
-            # 清空并缓慢输入用户名
-            username_element.clear()
-            for char in self.un:
-                username_element.send_keys(char)
-                time.sleep(0.05)
-            logging.info('输入用户名成功')
+            for selector in submit_selectors:
+                try:
+                    element = self.driver.find_element(*selector)
+                    if element.is_displayed() and element.is_enabled():
+                        self.click_element(element)
+                        time.sleep(5)
+                        return self.verify_login_success()
+                except:
+                    continue
             
-            # 查找并操作密码输入框
-            password_element = self.find_element_with_retry(password_selectors)
-            if not password_element:
-                raise Exception("未找到密码输入框")
-                
-            # 清空并缓慢输入密码
-            password_element.clear()
-            for char in self.pd:
-                password_element.send_keys(char)
-                time.sleep(0.05)
-            logging.info('输入密码成功')
+            return False
+        except Exception as e:
+            logging.error(f"填写登录表单失败: {e}")
+            return False
+    
+    def multi_selector_login(self):
+        """多选择器登录策略"""
+        # 更全面的选择器列表
+        username_selectors = [
+            (By.ID, "username"),
+            (By.ID, "userName"), 
+            (By.ID, "user_name"),
+            (By.ID, "loginName"),
+            (By.ID, "account"),
+            (By.NAME, "username"),
+            (By.NAME, "userName"),
+            (By.NAME, "account"),
+            (By.CSS_SELECTOR, "input[name='username']"),
+            (By.CSS_SELECTOR, "input[name='userName']"),
+            (By.XPATH, "//input[@type='text'][@placeholder]"),
+            (By.XPATH, "//input[@type='text'][contains(@placeholder, '用户')]"),
+            (By.XPATH, "//input[@type='text'][contains(@placeholder, '学号')]"),
+            (By.XPATH, "//input[@type='text'][contains(@placeholder, '工号')]"),
+            (By.CSS_SELECTOR, "input[type='text']:not([readonly])"),
+        ]
+        
+        password_selectors = [
+            (By.ID, "password"),
+            (By.ID, "pwd"),
+            (By.ID, "passWord"),
+            (By.NAME, "password"),
+            (By.NAME, "pwd"),
+            (By.CSS_SELECTOR, "input[name='password']"),
+            (By.XPATH, "//input[@type='password']"),
+            (By.CSS_SELECTOR, "input[type='password']"),
+        ]
+        
+        submit_selectors = [
+            (By.XPATH, "//button[@type='submit']"),
+            (By.XPATH, "//input[@type='submit']"),
+            (By.XPATH, "//button[contains(text(), '登录')]"),
+            (By.XPATH, "//button[contains(text(), 'Login')]"),
+            (By.XPATH, "//input[contains(@value, '登录')]"),
+            (By.XPATH, "//button[contains(@class, 'login')]"),
+            (By.CSS_SELECTOR, ".login-btn"),
+            (By.CSS_SELECTOR, ".btn-login"),
+            (By.CSS_SELECTOR, "button[class*='login']"),
+        ]
+        
+        try:
+            # 先滚动到页面顶部
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(0.5)
             
-            # 等待一下让界面响应
-            time.sleep(1)
+            # 查找用户名框
+            username_input = None
+            for selector in username_selectors:
+                try:
+                    elements = self.driver.find_elements(*selector)
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            username_input = elem
+                            logging.info(f"找到用户名输入框: {selector}")
+                            break
+                    if username_input:
+                        break
+                except:
+                    continue
             
-            # 查找并点击提交按钮
-            submit_element = self.find_element_with_retry(submit_selectors)
-            if not submit_element:
-                raise Exception("未找到提交按钮")
-                
-            # 使用JavaScript点击避免状态问题
-            self.driver.execute_script("arguments[0].click();", submit_element)
-            logging.info('点击登录按钮成功')
+            if not username_input:
+                logging.error("未找到用户名输入框")
+                self.save_debug_info("no_username_field")
+                return False
+            
+            # 填写用户名
+            self.fill_input_field(username_input, self.un)
+            logging.info("用户名填写成功")
+            
+            # 查找密码框
+            password_input = None
+            for selector in password_selectors:
+                try:
+                    elements = self.driver.find_elements(*selector)
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            password_input = elem
+                            logging.info(f"找到密码输入框: {selector}")
+                            break
+                    if password_input:
+                        break
+                except:
+                    continue
+            
+            if not password_input:
+                logging.error("未找到密码输入框")
+                self.save_debug_info("no_password_field")
+                return False
+            
+            # 填写密码
+            self.fill_input_field(password_input, self.pd)
+            logging.info("密码填写成功")
+            
+            # 查找提交按钮
+            submit_btn = None
+            for selector in submit_selectors:
+                try:
+                    elements = self.driver.find_elements(*selector)
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            submit_btn = elem
+                            logging.info(f"找到提交按钮: {selector}")
+                            break
+                    if submit_btn:
+                        break
+                except:
+                    continue
+            
+            if not submit_btn:
+                logging.error("未找到提交按钮")
+                return False
+            
+            # 点击提交按钮
+            self.click_element(submit_btn)
+            logging.info("已点击登录按钮")
             
             # 等待登录完成
             time.sleep(5)
             
-            # 检查是否登录成功
-            return self.check_login_success()
+            # 验证登录结果
+            return self.verify_login_success()
             
         except Exception as e:
-            logging.error(f"增强等待登录失败: {e}")
+            logging.error(f"多选择器登录失败: {e}")
             return False
-
-    def find_element_with_retry(self, selectors, max_attempts=3):
-        """使用多种选择器重试查找元素"""
-        for attempt in range(max_attempts):
-            for selector in selectors:
-                try:
-                    element = self.driver.find_element(*selector)
-                    if element.is_displayed() and element.is_enabled():
-                        logging.info(f"找到元素: {selector}")
-                        return element
-                except (NoSuchElementException, ElementNotInteractableException):
-                    continue
-            if attempt < max_attempts - 1:
-                time.sleep(1)
-        return None
-
-    def check_login_success(self):
-        """检查登录是否成功"""
-        current_url = self.driver.current_url
-        logging.info(f"当前URL: {current_url}")
-        self.driver.get("https://hdu.huitu.zhishulib.com/#!/Space/Category/list")
-        if "hdu.huitu.zhishulib.com" in current_url:
-            logging.info("成功跳转到目标网站")
+    
+    def javascript_injection_login(self):
+        """JavaScript注入登录"""
+        try:
+            # 使用JavaScript查找并填写表单
+            js_script = f"""
+                var usernameField = null;
+                var passwordField = null;
+                var submitButton = null;
+                
+                // 查找用户名输入框
+                var selectors = ['input[name="username"]', 'input[name="userName"]', '#username', '#userName', 'input[type="text"]'];
+                for (var i = 0; i < selectors.length; i++) {{
+                    var field = document.querySelector(selectors[i]);
+                    if (field && field.offsetParent !== null) {{
+                        usernameField = field;
+                        break;
+                    }}
+                }}
+                
+                // 查找密码输入框
+                selectors = ['input[name="password"]', '#password', '#pwd', 'input[type="password"]'];
+                for (var i = 0; i < selectors.length; i++) {{
+                    var field = document.querySelector(selectors[i]);
+                    if (field && field.offsetParent !== null) {{
+                        passwordField = field;
+                        break;
+                    }}
+                }}
+                
+                // 查找提交按钮
+                selectors = ['button[type="submit"]', 'input[type="submit"]', '.login-btn', '.btn-login'];
+                for (var i = 0; i < selectors.length; i++) {{
+                    var btn = document.querySelector(selectors[i]);
+                    if (btn && btn.offsetParent !== null) {{
+                        submitButton = btn;
+                        break;
+                    }}
+                }}
+                
+                if (usernameField && passwordField) {{
+                    usernameField.value = '{self.un}';
+                    passwordField.value = '{self.pd}';
+                    
+                    // 触发事件
+                    usernameField.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    usernameField.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    passwordField.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    passwordField.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    
+                    if (submitButton) {{
+                        submitButton.click();
+                        return 'clicked';
+                    }} else {{
+                        // 尝试提交表单
+                        var form = usernameField.closest('form');
+                        if (form) {{
+                            form.submit();
+                            return 'submitted';
+                        }}
+                    }}
+                }}
+                
+                return 'not_found';
+            """
             
+            result = self.driver.execute_script(js_script)
+            logging.info(f"JavaScript登录结果: {result}")
+            
+            if result in ['clicked', 'submitted']:
+                time.sleep(5)
+                return self.verify_login_success()
+            
+            return False
+            
+        except Exception as e:
+            logging.error(f"JavaScript注入登录失败: {e}")
+            return False
+    
+    def fill_input_field(self, element, text):
+        """安全地填写输入框"""
+        try:
+            # 方法1: 清空并输入
+            element.clear()
+            time.sleep(0.1)
+            element.send_keys(text)
+            
+            # 方法2: 如果方法1失败，使用JavaScript
+            if element.get_attribute('value') != text:
+                self.driver.execute_script(f"arguments[0].value = '{text}';", element)
+                
+                # 触发输入事件
+                self.driver.execute_script("""
+                    arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                    arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+                """, element)
+                
+        except Exception as e:
+            logging.error(f"填写输入框失败: {e}")
+            # 最终尝试：直接JavaScript设置
+            self.driver.execute_script(f"arguments[0].value = '{text}';", element)
+    
+    def click_element(self, element):
+        """安全地点击元素"""
+        try:
+            # 滚动到元素可见
+            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+            time.sleep(0.3)
+            
+            # 尝试普通点击
+            element.click()
+        except:
+            try:
+                # 使用JavaScript点击
+                self.driver.execute_script("arguments[0].click();", element)
+            except Exception as e:
+                logging.error(f"点击元素失败: {e}")
+                raise
+    
+    def verify_login_success(self):
+        """验证登录是否成功"""
+        time.sleep(3)
+        
+        # 检查URL
+        current_url = self.driver.current_url
+        logging.info(f"登录后URL: {current_url}")
+        
+        # 检查是否在目标网站
+        if "hdu.huitu.zhishulib.com" in current_url:
             # 获取Cookie
             cookie_list = self.driver.get_cookies()
-            self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
-            self.cfg["headers"]['Cookie'] = self.cookie
-            logging.info("登录成功！")
-            logging.info(f"获取到的Cookie长度: {len(self.cookie)}")
-            return True
-        else:
-            logging.warning(f"尚未跳转到目标网站，当前URL: {current_url}")
-            return False
+            if cookie_list:
+                self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                self.cfg["headers"]['Cookie'] = self.cookie
+                logging.info("登录验证成功")
+                return True
+        
+        # 检查页面是否包含错误信息
+        try:
+            page_source = self.driver.page_source.lower()
+            error_keywords = ['用户名或密码错误', '登录失败', 'invalid', 'error']
+            for keyword in error_keywords:
+                if keyword in page_source:
+                    logging.error(f"登录失败: 页面包含错误信息 '{keyword}'")
+                    return False
+        except:
+            pass
+        
+        # 尝试访问需要登录的页面
+        try:
+            self.driver.get("https://hdu.huitu.zhishulib.com/#!/Space/Category/list")
+            time.sleep(3)
+            if "hdu.huitu.zhishulib.com" in self.driver.current_url:
+                cookie_list = self.driver.get_cookies()
+                if cookie_list:
+                    self.cookie = ";".join([f"{item['name']}={item['value']}" for item in cookie_list])
+                    self.cfg["headers"]['Cookie'] = self.cookie
+                    return True
+        except Exception as e:
+            logging.error(f"验证登录时出错: {e}")
+        
+        return False
+    
+    def save_debug_info(self, suffix=""):
+        """保存调试信息"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"debug_{timestamp}_{suffix}.html" if suffix else f"debug_{timestamp}.html"
+            
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            
+            screenshot_name = f"screenshot_{timestamp}_{suffix}.png" if suffix else f"screenshot_{timestamp}.png"
+            self.driver.save_screenshot(screenshot_name)
+            
+            logging.info(f"调试信息已保存到 {filename} 和 {screenshot_name}")
+        except Exception as e:
+            logging.error(f"保存调试信息失败: {e}")
 
+    @retry_on_failure(max_retries=3)
     def get_user_info(self):
         logging.info('获取用户信息...')
         headers = self.cfg["headers"]
@@ -322,7 +624,11 @@ class SeatAutoBooker:
         cst_now = datetime.now(tz_cst)
         
         # 计算明天北京时间的预约时间点
-        book_date_cst = cst_now + timedelta(days=2)
+        if cst_now.hour >= TARGET_HOUR:
+            book_date_cst = cst_now + timedelta(days=1)
+        else:
+            book_date_cst = cst_now
+        
         book_time_cst = book_date_cst.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         
         # 转换为UTC时间戳
@@ -339,9 +645,10 @@ class SeatAutoBooker:
         headers = self.cfg["headers"]
         headers['Cookie'] = self.cookie
         logging.info(data)
+        
         for i in range(3):
             try:
-                logging.info(f"第 {i+1}/{3} 次尝试抢座: {start_hour}:00...")
+                logging.info(f"第 {i+1}/3 次尝试抢座: {start_hour}:00...")
                 resp = requests.post(self.cfg["target"], data=data, headers=headers)
                 resp_json = resp.json()
                 logging.info(f"收到响应: {resp_json}")
@@ -373,78 +680,113 @@ class SeatAutoBooker:
                     print(f"Server酱通知失败: {result}")
             except Exception as e:
                 logging.error(f"推送服务配置错误: {e}")
+    
+    def quit(self):
+        """安全退出浏览器"""
+        try:
+            self.driver.quit()
+        except:
+            pass
 
 
 if __name__ == "__main__":
     logging.info('====== 开始执行抢座脚本 ======')
     
-    with open("user_config.yml", 'r', encoding='utf-8') as f_obj:
-        user_config = yaml.safe_load(f_obj)
-    with open("config/basic_config.yml", 'r', encoding='utf-8') as f_obj:
-        basic_config = yaml.safe_load(f_obj)
+    try:
+        with open("user_config.yml", 'r', encoding='utf-8') as f_obj:
+            user_config = yaml.safe_load(f_obj)
+        with open("config/basic_config.yml", 'r', encoding='utf-8') as f_obj:
+            basic_config = yaml.safe_load(f_obj)
+    except Exception as e:
+        logging.error(f"读取配置文件失败: {e}")
+        exit(-1)
 
     if not user_config.get('enabled', False):
         logging.info('抢座功能未在 user_config.yml 中启用，脚本退出。')
         exit(0)
 
     s = SeatAutoBooker(basic_config["SeatAutoBooker"])
-    login_success = False
-    for attempt in range(3):  # 最多尝试3次
-        logging.info(f"第 {attempt + 1}/3 次尝试登录...")
-        if s.login() == 0:
-            login_success = True
-            break
-        else:
-            if attempt < 2:  # 如果不是最后一次尝试
-                logging.warning(f"登录失败，{5}秒后重试...")
-                time.sleep(5)
+    
+    try:
+        # 登录重试逻辑
+        login_success = False
+        for attempt in range(3):
+            logging.info(f"第 {attempt + 1}/3 次尝试登录...")
+            if s.login() == 0:
+                login_success = True
+                break
+            else:
+                if attempt < 2:
+                    logging.warning(f"登录失败，{5}秒后重试...")
+                    time.sleep(5)
+                
+        if not login_success:
+            error_msg = "登录失败，已尝试3次，请检查账号密码或网站更新。"
+            s.wechatNotice("HDU抢座失败", error_msg)
+            logging.error(error_msg)
+            s.quit()
+            exit(-1)
+        
+        # 获取用户信息重试逻辑
+        user_info_success = False
+        for attempt in range(3):
+            logging.info(f"第 {attempt + 1}/3 次尝试获取用户信息...")
+            if s.get_user_info() == 0:
+                user_info_success = True
+                break
+            else:
+                if attempt < 2:
+                    logging.warning(f"获取用户信息失败，{3}秒后重试...")
+                    time.sleep(3)
+                            
+        if not user_info_success:
+            error_msg = "获取用户信息失败，已尝试3次，Cookie可能已过期。"
+            s.wechatNotice("HDU抢座失败", error_msg)
+            logging.error(error_msg)
+            s.quit()
+            exit(-1)
+
+        # 等待到目标时间
+        tz_cst = ZoneInfo("Asia/Shanghai")
+        logging.info(f"登录成功，准备等待到北京时间 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
+        
+        now_cst = datetime.now(tz_cst)
+        target_time = now_cst.replace(hour=TARGET_HOUR, minute=TARGET_MINUTE, second=0, microsecond=0)
+        
+        # 如果当前时间已经超过目标时间，则设置为明天
+        if now_cst >= target_time:
+            target_time = target_time + timedelta(days=1)
+            logging.info(f"当前时间已超过今日目标时间，将等待到明天 {target_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        while True:
+            current_time_cst = datetime.now(tz_cst)
+            if current_time_cst >= target_time:
+                logging.info(f"北京时间 {current_time_cst.strftime('%H:%M:%S')} 已到，开始执行抢座！")
+                break
             
-    if not login_success:
-        s.wechatNotice("HDU抢座失败", "登录失败，已尝试3次，请检查账号密码或网站更新。")
-        s.driver.quit()
-        exit(-1)
-    
-    # 获取用户信息重试逻辑
-    user_info_success = False
-    for attempt in range(3):  # 最多尝试3次
-        logging.info(f"第 {attempt + 1}/3 次尝试获取用户信息...")
-        if s.get_user_info() == 0:
-            user_info_success = True
-            break
-        else:
-            if attempt < 2:  # 如果不是最后一次尝试
-                logging.warning(f"获取用户信息失败，{3}秒后重试...")
-                time.sleep(3)
-                        
-    if not user_info_success:
-        s.wechatNotice("HDU抢座失败", "获取用户信息失败，已尝试3次，Cookie可能已过期。")
-        s.driver.quit()
-        exit(-1)
-
-    # 等待到目标时间
-    tz_cst = ZoneInfo("Asia/Shanghai")
-    logging.info(f"登录成功，准备等待到北京时间 {TARGET_HOUR:02d}:{TARGET_MINUTE:02d} 进行抢座...")
-    
-    now_cst = datetime.now(tz_cst)
-    target_time = now_cst.replace(hour=TARGET_HOUR, minute=TARGET_MINUTE, second=0, microsecond=0)
-
-    while True:
-        current_time_cst = datetime.now(tz_cst)
-        if current_time_cst >= target_time:
-            logging.info(f"北京时间 {current_time_cst.strftime('%H:%M:%S')} 已到，开始执行抢座！")
-            break
+            remaining_seconds = (target_time - current_time_cst).total_seconds()
+            
+            if remaining_seconds > 10:
+                if int(remaining_seconds) % 10 == 0:
+                    logging.info(f"等待中... 距离目标时间还剩 {remaining_seconds:.0f} 秒")
+                time.sleep(1)
+            else:
+                time.sleep(0.05)
         
-        remaining_seconds = (target_time - current_time_cst).total_seconds()
+        # 执行抢座
+        results = []
+        success1, msg1 = s.book_seat(start_hour=9, duration_hours=13, user_config=user_config)
         
-        if int(remaining_seconds) % 10 == 0 and int(remaining_seconds) > 0:
-            logging.info(f"等待中... 距离目标时间还剩 {remaining_seconds:.0f} 秒")
-            time.sleep(1)
-        elif remaining_seconds < 10:
-             time.sleep(0.05)
+        # 发送通知
+        if success1:
+            s.wechatNotice("HDU抢座成功", msg1)
         else:
-             time.sleep(1)
-    
-    results = []
-    success1, msg1 = s.book_seat(start_hour=9, duration_hours=13, user_config=user_config)
-    
-    logging.info('====== 脚本执行完毕 ======')
+            s.wechatNotice("HDU抢座失败", msg1)
+            
+        logging.info('====== 脚本执行完毕 ======')
+        
+    except Exception as e:
+        logging.error(f"脚本执行出错: {e}")
+        s.wechatNotice("HDU抢座异常", f"脚本执行出错: {str(e)}")
+    finally:
+        s.quit()
