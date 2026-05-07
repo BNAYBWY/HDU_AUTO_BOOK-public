@@ -3,7 +3,7 @@ name: HDU Auto Book
 on:
   workflow_dispatch:  # 手动触发
   schedule:
-    - cron: '00 11 * * *'  # UTC 
+    - cron: '00 13 * * *'  # UTC 
   # 可选：每天12点检查一次健康状态
   # - cron: '0 4 * * *'   # UTC 4:00 健康检查
 
