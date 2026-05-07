@@ -1,8 +1,6 @@
 import os
 import time
 import yaml
-import queue
-import random
 import logging
 import requests
 
@@ -62,6 +60,178 @@ def retry(max_retry=3, delay=1):
         return wrapper
 
     return decorator
+
+
+# =========================
+# 增强的输入框查找器
+# =========================
+
+class EnhancedInputFinder:
+    """增强的输入框查找器，支持多种策略"""
+    
+    # 扩展的选择器列表
+    USERNAME_SELECTORS = [
+        (By.ID, "username"),
+        (By.ID, "userName"),
+        (By.ID, "user_name"),
+        (By.ID, "loginName"),
+        (By.ID, "loginname"),
+        (By.NAME, "username"),
+        (By.NAME, "userName"),
+        (By.NAME, "user_name"),
+        (By.NAME, "loginName"),
+        (By.CLASS_NAME, "username"),
+        (By.CLASS_NAME, "userName"),
+        (By.CSS_SELECTOR, "input[type='text'][name*='user']"),
+        (By.CSS_SELECTOR, "input[type='text'][name*='login']"),
+        (By.CSS_SELECTOR, "input[placeholder*='用户名']"),
+        (By.CSS_SELECTOR, "input[placeholder*='账号']"),
+        (By.CSS_SELECTOR, "input[placeholder*='学号']"),
+        (By.CSS_SELECTOR, "input[placeholder*='工号']"),
+        (By.XPATH, "//input[@type='text' and contains(@placeholder, '用户名')]"),
+        (By.XPATH, "//input[@type='text' and contains(@placeholder, '账号')]"),
+        (By.XPATH, "//input[@type='text' and contains(@placeholder, '学号')]"),
+        (By.XPATH, "//label[contains(text(), '用户名')]/following::input[1]"),
+        (By.XPATH, "//label[contains(text(), '账号')]/following::input[1]"),
+        (By.XPATH, "//label[contains(text(), '学号')]/following::input[1]"),
+    ]
+    
+    PASSWORD_SELECTORS = [
+        (By.ID, "password"),
+        (By.ID, "pwd"),
+        (By.ID, "passWord"),
+        (By.NAME, "password"),
+        (By.NAME, "pwd"),
+        (By.CLASS_NAME, "password"),
+        (By.CSS_SELECTOR, "input[type='password']"),
+        (By.CSS_SELECTOR, "input[placeholder*='密码']"),
+        (By.XPATH, "//input[@type='password' and contains(@placeholder, '密码')]"),
+        (By.XPATH, "//label[contains(text(), '密码')]/following::input[1]"),
+    ]
+    
+    SUBMIT_SELECTORS = [
+        (By.XPATH, "//button[@type='submit']"),
+        (By.XPATH, "//input[@type='submit']"),
+        (By.XPATH, "//button[contains(text(), '登录')]"),
+        (By.XPATH, "//button[contains(text(), '登陆')]"),
+        (By.XPATH, "//input[@value='登录']"),
+        (By.XPATH, "//input[@value='登陆']"),
+        (By.CSS_SELECTOR, "button[class*='login']"),
+        (By.CSS_SELECTOR, "button[class*='submit']"),
+        (By.CLASS_NAME, "login-btn"),
+        (By.CLASS_NAME, "submit-btn"),
+    ]
+    
+    @classmethod
+    def smart_find_input(cls, driver, selectors, timeout=10, description="输入框"):
+        """智能查找输入框，支持iframe切换"""
+        
+        # 先在主页面查找
+        for selector in selectors:
+            try:
+                elements = driver.find_elements(*selector)
+                for elem in elements:
+                    if elem.is_displayed() and elem.is_enabled():
+                        logging.info(f"找到{description}: {selector}")
+                        return elem
+            except:
+                continue
+        
+        # 查找iframe并切换进去
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+        frames.extend(driver.find_elements(By.TAG_NAME, "frame"))
+        
+        for i, frame in enumerate(frames):
+            try:
+                driver.switch_to.frame(frame)
+                
+                for selector in selectors:
+                    try:
+                        elements = driver.find_elements(*selector)
+                        for elem in elements:
+                            if elem.is_displayed() and elem.is_enabled():
+                                logging.info(f"在iframe {i}中找到{description}: {selector}")
+                                driver.switch_to.default_content()
+                                return elem
+                    except:
+                        continue
+                
+                driver.switch_to.default_content()
+            except:
+                driver.switch_to.default_content()
+                continue
+        
+        raise Exception(f"无法找到{description}")
+    
+    @classmethod
+    def find_username_input(cls, driver, timeout=10):
+        return cls.smart_find_input(driver, cls.USERNAME_SELECTORS, timeout, "用户名输入框")
+    
+    @classmethod
+    def find_password_input(cls, driver, timeout=10):
+        return cls.smart_find_input(driver, cls.PASSWORD_SELECTORS, timeout, "密码输入框")
+    
+    @classmethod
+    def find_submit_button(cls, driver, timeout=10):
+        return cls.smart_find_input(driver, cls.SUBMIT_SELECTORS, timeout, "登录按钮")
+
+
+# =========================
+# 倒计时显示器
+# =========================
+
+class CountdownDisplay:
+    """倒计时显示器"""
+    
+    def __init__(self, target_time):
+        self.target_time = target_time
+        self.last_display = ""
+        
+    def update(self):
+        """更新并返回倒计时字符串"""
+        now = datetime.now(TZ_CST)
+        
+        if now >= self.target_time:
+            return "倒计时: 00:00:00 - 开始抢座!"
+        
+        diff = self.target_time - now
+        hours = diff.seconds // 3600
+        minutes = (diff.seconds % 3600) // 60
+        seconds = diff.seconds % 60
+        
+        countdown_str = f"倒计时: {hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        # 只在变化时打印，减少输出
+        if countdown_str != self.last_display:
+            # 使用 \r 实现同一行刷新
+            print(f"\r{countdown_str}", end='', flush=True)
+            self.last_display = countdown_str
+        
+        return countdown_str
+    
+    def display_until_target(self):
+        """持续显示倒计时直到目标时间"""
+        print("\n" + "="*50)
+        print(f"目标时间: {self.target_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*50)
+        
+        while True:
+            countdown = self.update()
+            
+            if datetime.now(TZ_CST) >= self.target_time:
+                print("\n" + "="*50)
+                print("🎯 目标时间已到！开始抢座...")
+                print("="*50 + "\n")
+                break
+            
+            # 根据剩余时间调整刷新频率
+            diff = self.target_time - datetime.now(TZ_CST)
+            if diff.total_seconds() > 60:
+                time.sleep(0.5)
+            elif diff.total_seconds() > 10:
+                time.sleep(0.2)
+            else:
+                time.sleep(0.05)
 
 
 # =========================
@@ -144,43 +314,7 @@ class SeatAutoBooker:
         return "/usr/bin/chromedriver"
 
     # =========================
-    # 通用元素查找
-    # =========================
-
-    def find_element_safe(
-            self,
-            selectors,
-            timeout=5
-    ):
-
-        end_time = time.time() + timeout
-
-        while time.time() < end_time:
-
-            for selector in selectors:
-
-                try:
-
-                    elements = self.driver.find_elements(*selector)
-
-                    for elem in elements:
-
-                        if (
-                            elem.is_displayed()
-                            and
-                            elem.is_enabled()
-                        ):
-                            return elem
-
-                except:
-                    continue
-
-            time.sleep(0.2)
-
-        return None
-
-    # =========================
-    # 登录
+    # 增强的登录方法
     # =========================
 
     @retry(max_retry=3)
@@ -194,41 +328,23 @@ class SeatAutoBooker:
 
         time.sleep(3)
 
-        username_selectors = [
-            (By.ID, "username"),
-            (By.NAME, "username"),
-            (By.CSS_SELECTOR, "input[type='text']")
-        ]
-
-        password_selectors = [
-            (By.ID, "password"),
-            (By.NAME, "password"),
-            (By.CSS_SELECTOR, "input[type='password']")
-        ]
-
-        button_selectors = [
-            (By.XPATH, "//button[@type='submit']"),
-            (By.XPATH, "//input[@type='submit']")
-        ]
-
-        username_input = self.find_element_safe(
-            username_selectors
+        # 使用增强的输入框查找器
+        username_input = EnhancedInputFinder.find_username_input(
+            self.driver, timeout=10
         )
 
-        password_input = self.find_element_safe(
-            password_selectors
+        password_input = EnhancedInputFinder.find_password_input(
+            self.driver, timeout=10
         )
 
-        submit_btn = self.find_element_safe(
-            button_selectors
+        submit_btn = EnhancedInputFinder.find_submit_button(
+            self.driver, timeout=10
         )
 
         if not username_input:
             raise Exception("找不到用户名输入框")
-
         if not password_input:
             raise Exception("找不到密码输入框")
-
         if not submit_btn:
             raise Exception("找不到登录按钮")
 
@@ -305,7 +421,7 @@ class SeatAutoBooker:
         return False
 
     # =========================
-    # 时间等待
+    # 时间等待（带倒计时显示）
     # =========================
 
     def wait_until_target(self):
@@ -326,25 +442,14 @@ class SeatAutoBooker:
             f"等待至北京时间: "
             f"{target.strftime('%Y-%m-%d %H:%M:%S')}"
         )
-
-        while True:
-
-            now = datetime.now(TZ_CST)
-
-            remain = (
-                target - now
-            ).total_seconds()
-
-            if remain <= 0:
-                break
-
-            if remain > 1:
-                time.sleep(0.5)
-            else:
-                break
-
-        # 最后1秒高精度等待
-
+        
+        # 创建并启动倒计时显示器
+        countdown = CountdownDisplay(target)
+        
+        # 持续显示倒计时
+        countdown.display_until_target()
+        
+        # 最后微调确保精确
         while datetime.now(TZ_CST) < target:
             pass
 
