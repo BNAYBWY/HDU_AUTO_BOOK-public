@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 
 TARGET_HOUR = 21
-TARGET_MINUTE = 0
+TARGET_MINUTE = 7
 
 TZ_CST = ZoneInfo("Asia/Shanghai")
 
