@@ -489,6 +489,7 @@ class SeatAutoBooker:
             return False
 
     def book_seat(self, start_hour, duration_hours, user_config):
+        """优化后的抢座方法"""
         logging.info(f'开始抢座: {start_hour}:00, 持续 {duration_hours} 小时')
         seat_to_book = user_config['自定义'][0]
         
@@ -503,44 +504,123 @@ class SeatAutoBooker:
         # 转换为UTC时间戳
         book_time_utc = book_time_cst.astimezone(ZoneInfo("UTC"))
         
-        # 计算Unix时间戳
+        # 计算Unix时间戳（秒级）
         api_epoch_utc = datetime(1970, 1, 1, tzinfo=ZoneInfo("UTC"))
         delta = book_time_utc - api_epoch_utc
-        total_seconds = int(delta.total_seconds())
+        begin_timestamp = int(delta.total_seconds())
         
-        logging.info(f"预约时间: 北京时间 {book_time_cst.strftime('%Y-%m-%d %H:%M:%S')} -> UTC时间戳 {total_seconds}")
+        logging.info(f"预约时间: 北京时间 {book_time_cst.strftime('%Y-%m-%d %H:%M:%S')} -> UTC时间戳 {begin_timestamp}")
         
-        data = f"beginTime={total_seconds}&duration={3600 * duration_hours}&seats[0]={seat_to_book}&seatBookers[0]={self.user_data['uid']}"
-        headers = self.cfg["headers"]
+        # 使用字典构造POST数据
+        post_data = {
+            'beginTime': str(begin_timestamp),
+            'duration': str(3600 * duration_hours),
+            'seats[0]': str(seat_to_book),
+            'seatBookers[0]': str(self.user_data['uid'])
+        }
+        
+        # 准备请求头
+        headers = self.cfg["headers"].copy()
         headers['Cookie'] = self.cookie
-        logging.info(f"请求数据: {data}")
+        headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8'
+        headers['Origin'] = 'https://hdu.huitu.zhishulib.com'
+        headers['Referer'] = 'https://hdu.huitu.zhishulib.com/#!/Space/Category/list'
+        headers['Accept'] = 'application/json, text/javascript, */*; q=0.01'
+        headers['X-Requested-With'] = 'XMLHttpRequest'
+        
+        logging.info(f"请求URL: {self.cfg['target']}")
+        logging.info(f"请求数据: {post_data}")
+        # 不打印完整的cookie以避免泄露，只打印长度
+        logging.info(f"Cookie长度: {len(self.cookie)} 字符")
         
         for i in range(3):
             try:
                 logging.info(f"第 {i+1}/3 次尝试抢座: {start_hour}:00...")
                 
-                # 优先使用session
-                if self.session:
-                    resp = self.session.post(self.cfg["target"], data=data, headers=headers)
-                else:
-                    resp = requests.post(self.cfg["target"], data=data, headers=headers)
-                    
-                resp_json = resp.json()
-                logging.info(f"收到响应: {resp_json}")
+                # 记录请求开始时间
+                start_time = time.time()
                 
-                if resp_json.get("CODE") == "ok":
-                    message = f"成功抢到座位: {seat_to_book} at {start_hour}:00"
-                    logging.info(message)
-                    return True, message
+                # 使用session发送POST请求
+                if self.session:
+                    resp = self.session.post(
+                        self.cfg["target"], 
+                        data=post_data,
+                        headers=headers,
+                        timeout=10
+                    )
                 else:
-                    error_msg = resp_json.get('MESSAGE', '未知错误')
-                    logging.warning(f"抢座失败: {error_msg}")
-                    time.sleep(0.5)
-            except Exception as e:
-                logging.error(f"请求时发生错误: {e}")
+                    resp = requests.post(
+                        self.cfg["target"], 
+                        data=post_data,
+                        headers=headers,
+                        timeout=10
+                    )
+                
+                # 计算请求耗时
+                elapsed_time = (time.time() - start_time) * 1000
+                logging.info(f"请求耗时: {elapsed_time:.2f}ms")
+                logging.info(f"响应状态码: {resp.status_code}")
+                logging.info(f"响应头: {dict(resp.headers)}")
+                logging.info(f"原始响应内容: {resp.text}")
+                
+                # 处理可能的空响应或非JSON响应
+                if not resp.text or resp.text.strip() == '':
+                    logging.error("收到空响应")
+                    time.sleep(1)
+                    continue
+                
+                # 尝试解析JSON
+                try:
+                    resp_json = resp.json()
+                    logging.info(f"解析后的响应: {json.dumps(resp_json, ensure_ascii=False)}")
+                except json.JSONDecodeError as e:
+                    logging.error(f"JSON解析失败: {e}")
+                    logging.error(f"原始响应内容: {resp.text}")
+                    # 如果响应不是JSON，可能是HTML错误页面
+                    if "login" in resp.text.lower() or "认证" in resp.text:
+                        logging.error("检测到登录页面，Cookie可能已过期")
+                        self.refresh_cookie()
+                        headers['Cookie'] = self.cookie
+                        time.sleep(2)
+                    continue
+                
+                # 检查多种可能的成功状态码
+                code = resp_json.get("CODE") or resp_json.get("code") or resp_json.get("status")
+                message = resp_json.get("MESSAGE") or resp_json.get("message") or resp_json.get("msg", "未知错误")
+                
+                # 检查是否成功
+                if code == "ok" or code == "success" or code == 200 or code == 0:
+                    success_msg = f"✅ 成功抢到座位: {seat_to_book} at {start_hour}:00，持续{duration_hours}小时"
+                    logging.info(success_msg)
+                    return True, success_msg
+                else:
+                    logging.warning(f"抢座失败 - 状态码: {code}, 消息: {message}")
+                    
+                    # 如果cookie过期，尝试刷新
+                    if "登录" in str(message) or "login" in str(message).lower() or "session" in str(message).lower() or "认证" in str(message):
+                        logging.info("检测到登录状态失效，尝试刷新Cookie...")
+                        self.refresh_cookie()
+                        headers['Cookie'] = self.cookie
+                        time.sleep(2)
+                    elif "已预约" in str(message) or "已存在" in str(message) or "already" in str(message).lower():
+                        logging.warning("该时间段可能已预约过")
+                        return False, f"预约失败: {message}"
+                    else:
+                        time.sleep(0.5)
+                        
+            except requests.exceptions.Timeout:
+                logging.error(f"第 {i+1} 次请求超时")
                 time.sleep(1)
-
-        final_message = f"抢座失败: {start_hour}:00"
+            except requests.exceptions.ConnectionError as e:
+                logging.error(f"第 {i+1} 次连接错误: {e}")
+                time.sleep(2)
+            except Exception as e:
+                logging.error(f"第 {i+1} 次请求发生错误: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
+                time.sleep(1)
+        
+        final_message = f"❌ 抢座失败: {start_hour}:00，已重试3次"
         logging.warning(final_message)
         return False, final_message
 
@@ -550,7 +630,7 @@ class SeatAutoBooker:
             url = f'https://sctapi.ftqq.com/{self.SCKey}.send'
             data = {'title': title, 'desp': desp}
             try:
-                r = requests.post(url, data=data)
+                r = requests.post(url, data=data, timeout=5)
                 result = r.json()
                 if result.get("data", {}).get("error") == 'SUCCESS':
                     print("Server酱通知成功")
@@ -669,6 +749,8 @@ if __name__ == "__main__":
         
         # 执行抢座
         results = []
+        
+        # 抢8:00开始的座位，持续13小时
         success1, msg1 = s.book_seat(start_hour=8, duration_hours=13, user_config=user_config)
         results.append(msg1)
         
@@ -679,9 +761,9 @@ if __name__ == "__main__":
         # 发送最终结果通知
         final_message = "\n".join(results)
         if any("成功" in msg for msg in results):
-            s.wechatNotice("HDU抢座结果", f"部分或全部抢座成功！\n{final_message}")
+            s.wechatNotice("HDU抢座结果", f"🎉 部分或全部抢座成功！\n\n{final_message}")
         else:
-            s.wechatNotice("HDU抢座结果", f"抢座失败！\n{final_message}")
+            s.wechatNotice("HDU抢座结果", f"❌ 抢座失败！\n\n{final_message}")
         
         logging.info('====== 脚本执行完毕 ======')
         
@@ -689,6 +771,8 @@ if __name__ == "__main__":
         logging.info("用户中断脚本执行")
     except Exception as e:
         logging.error(f"脚本执行过程中发生未预期的错误: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         s.wechatNotice("HDU抢座异常", f"脚本执行异常: {str(e)}")
     finally:
         s.close()
