@@ -750,8 +750,8 @@ if __name__ == "__main__":
         # 执行抢座
         results = []
         
-        # 抢8:00开始的座位，持续13小时
-        success1, msg1 = s.book_seat(start_hour=8, duration_hours=13, user_config=user_config)
+        # 抢9:00开始的座位，持续13小时
+        success1, msg1 = s.book_seat(start_hour=9, duration_hours=13, user_config=user_config)
         results.append(msg1)
         
         # 可以在这里添加更多时段的抢座
