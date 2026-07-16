@@ -25,7 +25,7 @@ logging.basicConfig(
 
 # --- 定义抢座目标时间 (东八区时间) ---
 TARGET_HOUR = 14
-TARGET_MINUTE = 04
+TARGET_MINUTE = 6
 
 class SeatAutoBooker:
     def __init__(self, booker_config):
