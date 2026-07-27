@@ -751,7 +751,7 @@ if __name__ == "__main__":
         results = []
         
         # 抢9:00开始的座位，持续13小时
-        success1, msg1 = s.book_seat(start_hour=9, duration_hours=12, user_config=user_config)
+        success1, msg1 = s.book_seat(start_hour=9, duration_hours=11, user_config=user_config)
         results.append(msg1)
         
         # 可以在这里添加更多时段的抢座
