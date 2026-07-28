@@ -25,7 +25,7 @@ logging.basicConfig(
 
 # --- 定义抢座目标时间 (东八区时间) ---
 TARGET_HOUR = 20
-TARGET_MINUTE = 40
+TARGET_MINUTE = 00
 
 class SeatAutoBooker:
     def __init__(self, booker_config):
@@ -498,7 +498,7 @@ class SeatAutoBooker:
         cst_now = datetime.now(tz_cst)
         
         # 计算明天北京时间的预约时间点
-        book_date_cst = cst_now + timedelta(days=1)
+        book_date_cst = cst_now + timedelta(days=2)
         book_time_cst = book_date_cst.replace(hour=start_hour, minute=0, second=0, microsecond=0)
         
         # 转换为UTC时间戳
