@@ -533,9 +533,9 @@ class SeatAutoBooker:
         # 不打印完整的cookie以避免泄露，只打印长度
         logging.info(f"Cookie长度: {len(self.cookie)} 字符")
         
-        for i in range(3):
+        for i in range(10):
             try:
-                logging.info(f"第 {i+1}/3 次尝试抢座: {start_hour}:00...")
+                logging.info(f"第 {i+1}/10 次尝试抢座: {start_hour}:00...")
                 
                 # 记录请求开始时间
                 start_time = time.time()
@@ -620,7 +620,7 @@ class SeatAutoBooker:
                 logging.error(traceback.format_exc())
                 time.sleep(1)
         
-        final_message = f"❌ 抢座失败: {start_hour}:00，已重试3次"
+        final_message = f"❌ 抢座失败: {start_hour}:00，已重试10次"
         logging.warning(final_message)
         return False, final_message
 
